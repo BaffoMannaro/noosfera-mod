@@ -1,0 +1,13 @@
+{
+  "name": "noosfera",
+  "owner": {
+    "name": "Mauro Dev"
+  },
+  "plugins": [
+    {
+      "name": "noosfera",
+      "source": "./"
+    }
+  ],
+  "description": "Noosfera, lo studio di Mauro Dev, dentro Claude Code"
+}
