@@ -1,24 +1,29 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Entry, Load, Pair, Panel, Suggestion } from '../types'
+import type { Agent, Entry, Job, Load, Panel, Run, Suggestion, Tab } from '../types'
+import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, sectionTitle, short, trend } from './svg'
 
-// Noosfera beside the chat: the person's corner of the Dashboard in a pane, and above the
-// prompt the agents and requests that fit what they are writing. Everything comes from the
-// Noosfera connector the person already uses (feature claude_code_panel), with their own
-// login: each one sees their own data. Nothing is kept outside this session but the
-// connector's name and whether the box above the prompt is hidden.
+// Noosfera beside the chat: the person's corner of the Dashboard in a pane, in tabs, and above
+// the prompt the agents with their jobs; while an agent works the pane follows its steps.
+// Everything comes from the Noosfera connector the person already uses (feature
+// claude_code_panel), with their own login: each one sees their own data. Nothing is kept
+// outside this session but the connector's name and whether the band is hidden.
 
 const PANE = 'noosfera'
 const TITLE = 'Noosfera'
 const FEATURE = 'claude_code_panel'
 const STALE_MS = 10 * 60 * 1000
 
-const panel = atom({ plugin: 'noosfera', key: 'panel' } as const, null, { shape: 'panel-1' })
+const panel = atom({ plugin: 'noosfera', key: 'panel' } as const, null, { shape: 'panel-2' })
 const load = atom({ plugin: 'noosfera', key: 'load' } as const, { state: 'idle' } as Load)
 const matches = atom({ plugin: 'noosfera', key: 'matches' } as const, [], { shape: 'matches-1' })
 const draft = atom({ plugin: 'noosfera', key: 'draft' } as const, '')
 const bandHidden = atom({ plugin: 'noosfera', key: 'bandHidden' } as const, false)
+const tab = atom({ plugin: 'noosfera', key: 'tab' } as const, 'overview' as Tab)
+const picked = atom({ plugin: 'noosfera', key: 'picked' } as const, null as string | null)
+const runs = atom({ plugin: 'noosfera', key: 'runs' } as const, [], { shape: 'runs-1' })
+const tick = atom({ plugin: 'noosfera', key: 'tick' } as const, 0)
 
 const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -42,17 +47,6 @@ function match(list: Suggestion[], text: string, limit = 3): Suggestion[] {
   return out
 }
 
-const short = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace('.', ',')} mln` : n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1).replace('.', ',')}k` : String(Math.round(n))
-
-const euro = (n: number) => `${n.toFixed(2).replace('.', ',')} $`
-
-function trend(p: Pair): string {
-  if (p.previous === null || p.previous === 0) return ''
-  const d = Math.round(((p.current - p.previous) / p.previous) * 100)
-  return d === 0 ? ' =' : d > 0 ? ` +${d}%` : ` ${d}%`
-}
-
 function when(e: Entry): string {
   const [, m, d] = e.due.split('-')
   const day = e.days_left === 0 ? 'oggi' : e.days_left === 1 ? 'domani' : e.days_left < 0 ? `${-e.days_left} gg fa` : `${d}/${m}`
@@ -68,22 +62,62 @@ const FLAG: Record<string, string> = {
   due_soon: 'in scadenza',
 }
 
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'overview', label: 'Panoramica' },
+  { id: 'social', label: 'Social' },
+  { id: 'sites', label: 'Siti' },
+  { id: 'plans', label: 'Piani' },
+  { id: 'usage', label: 'Consumi' },
+]
+
+const ACTIVITY: Record<string, string> = {
+  image: 'Immagini', video: 'Video', chat: 'Chat', seo: 'SEO', import: 'Import', advice: 'Consigli',
+  index: 'Indice', brief: 'Brief', memory: 'Memoria', note: 'Note', agents: 'Agenti',
+}
+
 /** What the person sends to Claude to allow the pane's read under Auto mode. */
 function allowRequest(tools: string[]): string {
   const names = tools.length ? tools.map(t => `«${t}»`).join(' oppure ') : 'studio_run del connettore di Noosfera'
   return `Aggiungi alle mie impostazioni di Claude Code (il file ~/.claude/settings.json, nell'elenco permissions.allow) il permesso per lo strumento studio_run del connettore di Noosfera, così il pannello della mod Noosfera funziona anche in modalità Auto. Lo strumento è ${names}: se sono più di uno, scegli solo quello del connettore di Noosfera (studio.maurodev.it), non altri. Non cambiare nient'altro.`
 }
 
-/** Turns the person's draft and a suggestion into the new draft. */
-function filled(s: Suggestion, text: string): string {
-  const typed = text.trim()
-  if (!typed) return s.text
-  if (s.agent) return `Usa l'agente «${s.label.split(':')[0]}» di Noosfera: ${typed}`
-  return `${s.text.trimEnd()} ${typed}`
+/** The request that starts an agent on one of its jobs, with what the person already typed. */
+function jobRequest(agent: Agent, job: Job, typed: string): string {
+  const head = `Usa l'agente «${agent.name}» di Noosfera per il lavoro «${job.title}» (agent_start con agent "${agent.id}" e task "${job.id}")`
+  return typed.trim() ? `${head}: ${typed.trim()}` : `${head} per «cliente»: `
+}
+
+/** The agent the draft points to, from the suggestions' keywords. */
+function agentFor(data: Panel, text: string): string | null {
+  return match(data.suggestions, text, 3).find(s => s.agent)?.agent ?? null
+}
+
+/** The feature a tool call runs on the Noosfera connector, or null for any other tool. */
+function featureOf(tool: string, input: unknown, prefix: string): string | null {
+  if (!prefix || !tool.startsWith(prefix)) return null
+  const name = tool.slice(prefix.length)
+  if (name === 'studio_run') {
+    const f = (input as { feature?: unknown } | null)?.feature
+    return typeof f === 'string' ? f : null
+  }
+  return name
+}
+
+/** Marks the steps an agent's call completes: the first open step that names the feature, and every step before it. */
+function advance(run: Run, agent: Agent | undefined, feature: string): Run {
+  let next = run
+  if (!next.task && agent) {
+    const job = agent.tasks.find(t => t.steps.some(s => s.uses.includes(feature)))
+    if (job) next = { ...next, task: job.id, title: job.title, steps: [...next.steps, ...job.steps.map(s => ({ uses: s.uses, done: false }))] }
+  }
+  const at = next.steps.findIndex(s => !s.done && s.uses.includes(feature))
+  if (at < 0) return { ...next, calls: next.calls + 1, now: feature }
+  return { ...next, calls: next.calls + 1, now: feature, steps: next.steps.map((s, i) => (i <= at ? { ...s, done: true } : s)) }
 }
 
 let server: string | null = null
 let busy = false
+let ticker: { cancel: () => void } | null = null
 
 /** The connector's name as /mcp lists it: the server whose studio_run knows our feature. */
 async function call($: EngineInterface, name: string): Promise<{ panel: Panel | null; why: string }> {
@@ -162,18 +196,24 @@ async function refresh($: EngineInterface) {
   }
 }
 
+/** Tokens in the context and the session's spend now, to count what an agent used. */
+async function meter($: EngineInterface): Promise<{ tokens: number; cost: number }> {
+  const u = await $.session.usage().catch(() => null)
+  return { tokens: u?.context.tokens ?? 0, cost: u?.cost?.usd ?? 0 }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const ran = await next(e)
     await $.command.register({ name: 'noosfera', description: 'Apre il pannello di Noosfera e lo aggiorna' })
     if ((await $.store.get('bandHidden')) === true) await update($, bandHidden, () => true)
-    void $.ui.open({ id: PANE, title: TITLE })
+    void $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
     void refresh($)
     return ran
   })
 
   on('command.run', { command: 'noosfera' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE })
+    await $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
     await update($, bandHidden, () => false)
     await $.store.set('bandHidden', false)
     await refresh($)
@@ -185,8 +225,79 @@ export const register: Register = on => {
     return { text: 'Pannello di Noosfera aperto.' }
   })
 
+  // Agents at work: agent_start opens a run, every later call on the connector moves its steps.
+  on('tool.call', async ($, e, next) => {
+    const input = (e as { input?: unknown }).input ?? e
+    const tool = e.tool
+    const isStart = tool.endsWith('__studio_run') && (input as { feature?: unknown })?.feature === 'agent_start'
+    const data = await read($, panel)
+    if (isStart && data) {
+      const args = ((input as { args?: Record<string, unknown> }).args ?? {}) as { agent?: string; task?: string }
+      const agent = data.agents?.find(a => a.id === args.agent)
+      if (agent) {
+        const job = args.task ? agent.tasks.find(t => t.id === args.task) : undefined
+        const m = await meter($)
+        const startedAt = await $.clock.now()
+        const run: Run = {
+          id: `${startedAt}`,
+          agent: agent.id,
+          task: job?.id ?? null,
+          title: job?.title ?? 'Sceglie il lavoro',
+          prefix: tool.slice(0, -'studio_run'.length),
+          startedAt,
+          endedAt: null,
+          steps: [...agent.orient.steps, ...(job?.steps ?? [])].map(s => ({ uses: s.uses, done: false })),
+          calls: 0,
+          now: 'agent_start',
+          startTokens: m.tokens,
+          tokens: m.tokens,
+          startCost: m.cost,
+          cost: m.cost,
+          status: 'running',
+        }
+        await update($, runs, list => [run, ...list.filter(r => r.status !== 'done' || r.agent !== agent.id)].slice(0, 3))
+        await update($, picked, () => null)
+        void $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
+        if (!ticker) ticker = $.clock.every(1000, () => void update($, tick, n => n + 1))
+      }
+      return next(e)
+    }
+    const list = await read($, runs)
+    const live = list.find(r => r.status === 'running')
+    if (!live) return next(e)
+    const feature = featureOf(tool, input, live.prefix)
+    if (feature && feature !== FEATURE) {
+      const agent = data?.agents?.find(a => a.id === live.agent)
+      await update($, runs, all => all.map(r => (r.id === live.id ? advance(r, agent, feature) : r)))
+    }
+    const ran = await next(e)
+    const m = await meter($)
+    await update($, runs, all => all.map(r => (r.id === live.id ? { ...r, tokens: m.tokens, cost: m.cost } : r)))
+    return ran
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    const list = await read($, runs)
+    if (list.some(r => r.status === 'waiting')) {
+      await update($, runs, all => all.map(r => (r.status === 'waiting' ? { ...r, status: 'running', endedAt: null } : r)))
+      if (!ticker) ticker = $.clock.every(1000, () => void update($, tick, n => n + 1))
+    }
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const ran = await next(e)
+    const list = await read($, runs)
+    if (list.some(r => r.status === 'running')) {
+      const m = await meter($)
+      const end = await $.clock.now()
+      await update($, runs, all =>
+        all.map(r => (r.status === 'running'
+          ? { ...r, tokens: m.tokens, cost: m.cost, endedAt: end, now: null, status: r.steps.every(s => s.done) ? 'done' : 'waiting' }
+          : r)))
+    }
+    ticker?.cancel()
+    ticker = null
     const l = await read($, load)
     if (l.state !== 'loading' && (l.state !== 'ok' || (await $.clock.now()) - l.at > STALE_MS)) void refresh($)
     return ran
@@ -204,35 +315,62 @@ export const register: Register = on => {
     return ran
   })
 
+  // Above the prompt: the agents with their picture; one picked shows its jobs.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey || e.props.isWorking || (await read($, bandHidden))) return next(e)
     const data = await read($, panel)
-    if (!data) return next(e)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const agents = data?.agents ?? []
+    if (!data || agents.length === 0) return next(e)
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const typed = await read($, draft)
-    let list = await read($, matches)
-    let lead = 'Noosfera, per questo:'
-    if (!typed.trim()) {
-      const urgent = data.dashboard?.urgent.length ?? 0
-      const ids = [urgent > 0 ? 'plans-today' : 'dashboard', 'agents', 'projects']
-      list = ids.map(id => data.suggestions.find(s => s.id === id)).filter((s): s is Suggestion => Boolean(s)).slice(0, 3)
-      lead = 'Noosfera:'
+    const chosen = await read($, picked)
+    await read($, matches)
+    const hint = agentFor(data, typed)
+    const agent = agents.find(a => a.id === chosen)
+
+    if (agent) {
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {Svg && <Svg source={avatar(agent.avatar, agent.color, 30, false, agent.name)} alt={agent.name} width={30} height={30} />}
+            <Text bold>{agent.nickname ? `${agent.nickname}, ${agent.name}` : agent.name}</Text>
+            <Text dimColor>scegli il lavoro</Text>
+          </Box>
+          <Box flexDirection="row" flexWrap="wrap" gap={1}>
+            {agent.tasks.map((t, i) => (
+              <Button
+                key={`t-${agent.id}-${t.id}`}
+                label={t.title}
+                hotkey={i < 9 ? String(i + 1) : undefined}
+                onPress={async () => {
+                  const box = await $.prompt.read()
+                  await $.prompt.fill({ text: jobRequest(agent, t, box.text), mode: 'replace' })
+                  await update($, picked, () => null)
+                }}
+              />
+            ))}
+            <Button key="back" label="Indietro" dimColor onPress={() => update($, picked, () => null)} />
+          </Box>
+        </Box>
+      )
     }
-    if (list.length === 0) return next(e)
+
     return (
-      <Box flexDirection="row" flexWrap="wrap" gap={1}>
-        <Text dimColor>{lead}</Text>
-        {list.map((s, i) => (
-          <Button
-            key={`s-${s.id}`}
-            label={s.label}
-            hotkey={String(i + 1)}
-            variant={i === 0 && typed.trim() ? 'primary' : undefined}
-            onPress={async () => {
-              const box = await $.prompt.read()
-              await $.prompt.fill({ text: filled(s, box.text), mode: 'replace' })
-            }}
-          />
+      <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+        <Text dimColor>Agenti</Text>
+        {agents.map((a, i) => (
+          <Box key={`a-${a.id}`} flexDirection="row" alignItems="center" gap={1}>
+            {Svg && <Svg source={avatar(a.avatar, a.color, 28, a.id === hint, a.name)} alt={a.name} width={28} height={28} />}
+            <Button
+              key={`b-${a.id}`}
+              label={a.nickname || a.name}
+              hotkey={String(i + 1)}
+              variant={a.id === hint ? 'primary' : undefined}
+              onPress={() => update($, picked, () => a.id)}
+            />
+          </Box>
         ))}
         <Button
           key="hide"
@@ -241,7 +379,7 @@ export const register: Register = on => {
           onPress={async () => {
             await update($, bandHidden, () => true)
             await $.store.set('bandHidden', true)
-            $.ui.toast('Suggerimenti di Noosfera nascosti: /noosfera li rimette.')
+            $.ui.toast('Agenti di Noosfera nascosti: /noosfera li rimette.')
           }}
         />
       </Box>
@@ -249,7 +387,9 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Link, Text } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Button, Link, Text } = els
+    const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const l = await read($, load)
     const data = await read($, panel)
     const again = <Button key="refresh" label="Aggiorna" dimColor onPress={() => refresh($)} />
@@ -258,17 +398,12 @@ export const register: Register = on => {
       if (l.state === 'auto') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold>Un permesso per la modalità Auto</Text>
-            <Text wrap="wrap">In modalità Auto Claude Code blocca la lettura del pannello finché non la permetti. Si fa una volta sola:</Text>
-            <Text wrap="wrap">1. Premi «Prepara la richiesta», invia il messaggio e accetta se Claude chiede conferma.</Text>
-            <Text wrap="wrap">2. Se Claude risponde che la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale (in basso, accanto al modello), invia di nuovo e poi torna ad Auto.</Text>
-            <Text wrap="wrap">3. Premi Aggiorna.</Text>
-            <Button
-              key="ask-allow"
-              label="Prepara la richiesta"
-              variant="primary"
-              onPress={() => $.prompt.fill({ text: allowRequest(l.tools), mode: 'replace' })}
-            />
+            <Text bold color={C.text}>Un permesso per la modalità Auto</Text>
+            <Text wrap="wrap" color={C.t2}>In modalità Auto Claude Code blocca la lettura del pannello finché non la permetti. Si fa una volta sola:</Text>
+            <Text wrap="wrap" color={C.t2}>1. Premi «Prepara la richiesta», invia il messaggio e accetta se Claude chiede conferma.</Text>
+            <Text wrap="wrap" color={C.t2}>2. Se Claude risponde che la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale (in basso, accanto al modello), invia di nuovo e poi torna ad Auto.</Text>
+            <Text wrap="wrap" color={C.t2}>3. Premi Aggiorna.</Text>
+            <Button key="ask-allow" label="Prepara la richiesta" variant="primary" onPress={() => $.prompt.fill({ text: allowRequest(l.tools), mode: 'replace' })} />
             {again}
           </Box>
         )
@@ -276,8 +411,8 @@ export const register: Register = on => {
       if (l.state === 'missing') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold>Noosfera non è collegato qui</Text>
-            <Text>Collega il connettore di Noosfera a Claude (Impostazioni, Connettori, indirizzo studio.maurodev.it/api/mcp), poi premi Aggiorna.</Text>
+            <Text bold color={C.text}>Noosfera non è collegato qui</Text>
+            <Text wrap="wrap" color={C.t2}>Collega il connettore di Noosfera a Claude (Impostazioni, Connettori, indirizzo studio.maurodev.it/api/mcp), poi premi Aggiorna.</Text>
             {again}
           </Box>
         )
@@ -285,89 +420,180 @@ export const register: Register = on => {
       if (l.state === 'error') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold>Non riesco a leggere Noosfera</Text>
-            <Text dimColor wrap="wrap">{l.message}</Text>
+            <Text bold color={C.text}>Non riesco a leggere Noosfera</Text>
+            <Text wrap="wrap" color={C.t3}>{l.message}</Text>
             {again}
           </Box>
         )
       }
-      return <Text dimColor>Leggo la tua dashboard di Noosfera…</Text>
+      return <Text color={C.t3}>Leggo la tua dashboard di Noosfera…</Text>
     }
 
+    const now = await $.clock.now()
+    await read($, tick)
+    const current = await read($, tab)
+    const list = await read($, runs)
     const d = data.dashboard
-    const usage = data.usage
-    const k = d?.kpis
-    const month = d?.my_month
+    const tabs = TABS.filter(t => t.id === 'overview' || t.id === 'usage' || (d && (t.id !== 'social' || (d.social?.length ?? 0) > 0)))
+    const shown = tabs.some(t => t.id === current) ? current : 'overview'
+    const status = l.state === 'loading' ? 'aggiorno…' : l.state === 'ok' ? (now - l.at < 60_000 ? 'aggiornato ora' : `aggiornato ${Math.round((now - l.at) / 60_000)} min fa`) : ''
+
+    const row = (key: string, href: string, left: string, right: string, accent?: string) => (
+      <Box key={key} flexDirection="row" justifyContent="space-between" paddingX={1} backgroundColor={C.s1} hover={{ backgroundColor: C.s3 }}>
+        <Link href={href}>{left}</Link>
+        <Text color={accent ?? C.t3}>{right}</Text>
+      </Box>
+    )
+
+    const entries = (items: Entry[], prefix: string) =>
+      items.map((u, i) => row(`${prefix}-${i}`, u.link, `${u.client}: ${u.title}`, u.flags[0] ? `${when(u)} · ${FLAG[u.flags[0]] ?? u.flags[0]}` : when(u), u.flags.includes('late') ? C.danger : u.days_left <= 1 ? C.yellow : C.t3))
+
+    // Agents at work, above everything while they run.
+    const runsView = list.slice(0, 2).map(r => {
+      const a = data.agents?.find(x => x.id === r.agent)
+      if (!a) return null
+      return Svg
+        ? <Svg key={`run-${r.id}`} source={runCard(r, a.name, a.nickname, a.color, a.avatar, now)} alt={`${a.name}: ${r.title}`} isInteractive />
+        : <Text key={`run-${r.id}`}>{a.name}: {r.title} ({r.steps.filter(s => s.done).length}/{r.steps.length})</Text>
+    })
+
+    let body: unknown = null
+    if (shown === 'overview') {
+      const k = d?.kpis
+      const views = d?.chart ? d.chart.days.map((_, i) => Object.values(d.chart!.views).reduce((s, v) => s + (v[i] ?? 0), 0)) : undefined
+      const inter = d?.chart ? d.chart.days.map((_, i) => Object.values(d.chart!.interactions).reduce((s, v) => s + (v[i] ?? 0), 0)) : undefined
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {k && Svg && (
+            <Svg
+              source={kpis([
+                { label: 'Visualizzazioni', value: short(k.views.current), trend: trend(k.views), spark: views },
+                { label: 'Interazioni', value: short(k.interactions.current), trend: trend(k.interactions), spark: inter, color: C.yellow },
+                { label: 'Visite ai siti', value: short(k.sessions.current), trend: trend(k.sessions), sub: k.sessions.previous !== null ? `settimana prima ${short(k.sessions.previous)}` : 'ultimi 7 giorni' },
+                { label: 'Contatti', value: short(k.contacts.current), trend: trend(k.contacts), sub: k.contacts.previous !== null ? `settimana prima ${short(k.contacts.previous)}` : 'dai moduli dei siti' },
+              ])}
+              alt="Numeri degli ultimi 7 giorni"
+              isInteractive
+            />
+          )}
+          {d && Svg && <Svg source={sectionTitle('Da fare', d.urgent.length)} alt="Da fare" />}
+          {d && d.urgent.length === 0 && <Text color={C.t3}>Niente di urgente nei piani.</Text>}
+          {d && entries(d.urgent.slice(0, 4), 'u')}
+          {Svg && <Svg source={sectionTitle('I tuoi progetti', data.projects.mine)} alt="I tuoi progetti" />}
+          {data.projects.latest.length === 0 && <Text color={C.t3}>Ancora nessun progetto tuo.</Text>}
+          {data.projects.latest.map((p, i) => row(`p-${i}`, p.link, p.name, p.client && p.client !== p.name ? p.client : ''))}
+        </Box>
+      )
+    } else if (shown === 'social' && d) {
+      const chart = d.chart
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {chart && Svg && (
+            <Svg
+              source={dailyBars('Visualizzazioni, 14 giorni', chart.days, [
+                { color: C.ig, values: chart.views.instagram ?? [] },
+                { color: C.fb, values: chart.views.facebook ?? [] },
+              ])}
+              alt="Visualizzazioni giorno per giorno"
+              isInteractive
+            />
+          )}
+          {Svg && <Svg source={sectionTitle('Clienti', d.social?.length ?? 0)} alt="Clienti" />}
+          {(d.social ?? []).map((c, i) => {
+            const t = trend(c.views)
+            return row(`c-${i}`, c.link, c.name, `${short(c.views.current)} viste ${t.text}`.trim(), t.up === false ? C.danger : t.up ? C.limeText : C.t3)
+          })}
+        </Box>
+      )
+    } else if (shown === 'sites' && d) {
+      const total = d.sites_total ?? d.sites.length
+      const red = d.sites.filter(s => s.red > 0).length
+      const amber = d.sites.filter(s => s.red === 0 && s.amber > 0).length
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {Svg && (
+            <Svg
+              source={pills([
+                { label: 'Siti', value: total, color: C.text },
+                { label: 'Va tutto bene', value: Math.max(0, total - red - amber), color: C.success },
+                { label: 'Da guardare', value: amber, color: C.warn },
+                { label: 'Gravi', value: red, color: C.danger },
+              ])}
+              alt="Stato dei siti"
+            />
+          )}
+          {d.sites.map((s, i) =>
+            row(`s-${i}`, s.url ?? data.studio_url + '/siti', s.name,
+              s.red ? `${s.red} gravi` : s.amber ? `${s.amber} da guardare` : s.performance ? `PageSpeed ${Math.round(s.performance)}` : 'ok',
+              s.red ? C.danger : s.amber ? C.warn : C.success))}
+          <Link href={`${data.studio_url}/siti`}>Apri la tab Siti</Link>
+        </Box>
+      )
+    } else if (shown === 'plans' && d) {
+      const uc = d.urgent_counts
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {Svg && (
+            <Svg
+              source={pills([
+                { label: 'In ritardo', value: uc.late ?? 0, color: C.danger },
+                { label: 'In scadenza', value: uc.due_soon ?? 0, color: C.yellow },
+                { label: 'Da pubblicare', value: uc.ready_unpublished ?? 0, color: C.lime },
+                { label: 'Dal cliente', value: uc.awaiting_client ?? 0, color: C.t2 },
+              ])}
+              alt="Scadenze dei piani"
+            />
+          )}
+          {Svg && <Svg source={sectionTitle('Da fare', d.urgent.length)} alt="Da fare" />}
+          {d.urgent.length === 0 && <Text color={C.t3}>Niente di urgente.</Text>}
+          {entries(d.urgent, 'pu')}
+          {Svg && <Svg source={sectionTitle('Prossime uscite', d.upcoming.length)} alt="Prossime uscite" />}
+          {d.upcoming.length === 0 && <Text color={C.t3}>Nessuna uscita nei prossimi 14 giorni.</Text>}
+          {entries(d.upcoming, 'pn')}
+          <Link href={`${data.studio_url}/piani?vista=calendario`}>Apri il calendario dei piani</Link>
+        </Box>
+      )
+    } else {
+      const u = data.usage
+      const mine = d?.my_month
+      const team = d?.team_month
+      const acts = Object.entries(mine?.activities ?? {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 6)
+      const people = (team?.people ?? []).filter(p => p.spent_usd > 0 || p.me)
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {u && Svg && (
+            <Svg
+              source={ring(
+                u.percent,
+                u.scope === 'personal' ? 'Il tuo limite del mese' : 'Budget del team',
+                mine ? `${money(mine.spent_usd)} spesi da te` : `${u.percent}% usato`,
+                team ? `Team: ${money(team.spent_usd)} su ${money(team.budget_usd)}` : `Si azzera il ${u.resets_at.slice(8, 10)}/${u.resets_at.slice(5, 7)}`,
+              )}
+              alt="Consumi del mese"
+              isInteractive
+            />
+          )}
+          {acts.length > 0 && Svg && <Svg source={hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) })))} alt="Spese per attività" isInteractive />}
+          {people.length > 0 && Svg && <Svg source={hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 })))} alt="Spese del team" isInteractive />}
+          {!u && !mine && <Text color={C.t3}>Nessun dato sui consumi.</Text>}
+        </Box>
+      )
+    }
+
     return (
       <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text bold>Ciao {data.me.name}</Text>
-          {l.state === 'loading' ? <Text dimColor>aggiorno…</Text> : again}
-        </Box>
-
-        {usage && (
-          <Text>
-            {usage.scope === 'personal' ? 'Il tuo limite del mese: ' : 'Budget del team: '}
-            <Text bold color={usage.percent >= 85 ? 'red' : undefined}>{usage.percent}%</Text>
-            {month ? <Text dimColor> ({euro(month.spent_usd)}{month.limit_usd !== null ? ` su ${euro(month.limit_usd)}` : ''})</Text> : null}
-          </Text>
-        )}
-
-        {k && (
-          <Box flexDirection="column">
-            <Text bold>Ultimi 7 giorni</Text>
-            <Text>Visualizzazioni {short(k.views.current)}<Text dimColor>{trend(k.views)}</Text></Text>
-            <Text>Interazioni {short(k.interactions.current)}<Text dimColor>{trend(k.interactions)}</Text></Text>
-            <Text>Visite ai siti {short(k.sessions.current)}<Text dimColor>{trend(k.sessions)}</Text>, contatti {short(k.contacts.current)}</Text>
-          </Box>
-        )}
-
-        {d && (
-          <Box flexDirection="column">
-            <Text bold>Da fare {d.urgent.length > 0 ? `(${Object.values(d.urgent_counts).reduce((a, b) => a + b, 0)})` : ''}</Text>
-            {d.urgent.length === 0 && <Text dimColor>Niente di urgente nei piani.</Text>}
-            {d.urgent.map((u, i) => (
-              <Link key={`u-${i}`} href={u.link}>
-                {when(u)} · {u.client}: {u.title}
-                {u.flags[0] ? ` (${FLAG[u.flags[0]] ?? u.flags[0]})` : ''}
-              </Link>
-            ))}
-          </Box>
-        )}
-
-        {d && d.upcoming.length > 0 && (
-          <Box flexDirection="column">
-            <Text bold>Prossime uscite</Text>
-            {d.upcoming.map((u, i) => (
-              <Link key={`n-${i}`} href={u.link}>
-                {when(u)} · {u.client}: {u.title}
-              </Link>
-            ))}
-          </Box>
-        )}
-
-        {d && d.sites.length > 0 && (
-          <Box flexDirection="column">
-            <Text bold>Siti con avvisi</Text>
-            {d.sites.map((s, i) => (
-              <Text key={`w-${i}`}>
-                {s.name} <Text color={s.red ? 'red' : 'yellow'}>{s.red ? `${s.red} gravi` : `${s.amber} da guardare`}</Text>
-              </Text>
-            ))}
-          </Box>
-        )}
-
-        <Box flexDirection="column">
-          <Text bold>I tuoi progetti ({data.projects.mine})</Text>
-          {data.projects.latest.length === 0 && <Text dimColor>Ancora nessun progetto tuo.</Text>}
-          {data.projects.latest.map((p, i) => (
-            <Link key={`p-${i}`} href={p.link}>
-              {p.name}{p.client ? ` · ${p.client}` : ''}
-            </Link>
+        {Svg ? <Svg source={header(data.me.name, status, l.state === 'ok')} alt={`Noosfera, ciao ${data.me.name}`} isInteractive /> : <Text bold>{`Noosfera · Ciao ${data.me.name}`}</Text>}
+        {runsView}
+        <Box flexDirection="row" flexWrap="wrap" gap={1}>
+          {tabs.map(t => (
+            <Button key={`tab-${t.id}`} label={t.label} variant={t.id === shown ? 'primary' : undefined} dimColor={t.id !== shown} onPress={() => update($, tab, () => t.id)} />
           ))}
         </Box>
-
-        <Link href={`${data.studio_url}/dashboard`}>Apri Noosfera</Link>
+        {body as never}
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+          <Link href={`${data.studio_url}/dashboard`}>Apri Noosfera</Link>
+          {l.state === 'loading' ? <Text color={C.t3}>aggiorno…</Text> : again}
+        </Box>
       </Box>
     )
   })

@@ -3,6 +3,7 @@ export type Pair = { current: number; previous: number | null }
 export type Entry = {
   client: string
   title: string
+  kind?: string
   due: string
   time: string | null
   days_left: number
@@ -20,6 +21,19 @@ export type Suggestion = {
   agent?: string
 }
 
+export type Job = { id: string; title: string; steps: { uses: string[] }[] }
+
+export type Agent = {
+  id: string
+  name: string
+  nickname: string
+  summary: string
+  color: string
+  avatar: string | null
+  orient: Job
+  tasks: Job[]
+}
+
 /** What the connector's claude_code_panel answers (src/lib/mcp-panel-features.ts in Noosfera). */
 export type Panel = {
   me: { name: string; superadmin: boolean; sections: Record<string, boolean> }
@@ -29,13 +43,18 @@ export type Panel = {
   dashboard?: {
     today: string
     kpis: { views: Pair; interactions: Pair; followers: number | null; sessions: Pair; contacts: Pair; adSpend: Pair }
+    chart?: { days: string[]; views: Record<string, (number | null)[]>; interactions: Record<string, (number | null)[]> }
     urgent_counts: Record<string, number>
     urgent: Entry[]
     upcoming: Entry[]
-    sites: { name: string; red: number; amber: number }[]
-    my_month: { spent_usd: number; limit_usd: number | null } | null
-    team_month: { spent_usd: number; budget_usd: number }
+    social?: { name: string; networks: string[]; views: Pair; interactions: Pair; followers: number | null; followers_change: number | null; link: string }[]
+    sites: { name: string; url?: string; red: number; amber: number; performance?: number | null; sessions?: Pair | null; contacts?: number | null; checked?: string | null }[]
+    sites_total?: number
+    sites_alerts?: number
+    my_month: { spent_usd: number; limit_usd: number | null; activities?: Record<string, number> } | null
+    team_month: { spent_usd: number; budget_usd: number; people?: { name: string; spent_usd: number; limit_usd: number | null; me: boolean }[] }
   }
+  agents?: Agent[]
   suggestions: Suggestion[]
 }
 
@@ -48,6 +67,27 @@ export type Load =
   /** Auto mode refused the read: the tool names to allow (mcp__<server>__studio_run). */
   | { state: 'auto'; tools: string[] }
 
+export type Tab = 'overview' | 'social' | 'sites' | 'plans' | 'usage'
+
+/** An agent at work, followed from its agent_start call to the end of the turn. */
+export type Run = {
+  id: string
+  agent: string
+  task: string | null
+  title: string
+  prefix: string
+  startedAt: number
+  endedAt: number | null
+  steps: { uses: string[]; done: boolean }[]
+  calls: number
+  now: string | null
+  startTokens: number
+  tokens: number
+  startCost: number
+  cost: number
+  status: 'running' | 'waiting' | 'done'
+}
+
 declare module 'claude-code' {
   interface PluginState {
     noosfera: {
@@ -56,6 +96,10 @@ declare module 'claude-code' {
       matches: Shaped<Suggestion[]>
       draft: string
       bandHidden: boolean
+      tab: Tab
+      picked: string | null
+      runs: Shaped<Run[]>
+      tick: number
     }
   }
 }

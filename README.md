@@ -1,6 +1,10 @@
 # Noosfera per Claude Code
 
-La mod di Noosfera per Claude Code e per la tab Code dell'app di Claude. Accanto alla chat mostra il pannello «Noosfera» con la tua parte della dashboard: quanto hai usato del limite del mese, i tuoi ultimi progetti e, se hai la sezione Dashboard, i numeri della settimana, le cose da fare nei piani, le prossime uscite e i siti con avvisi. Sopra il campo del prompt propone gli agenti e le richieste che fanno al caso di quello che stai scrivendo: un clic e la frase è nel campo, mai inviata da sola.
+La mod di Noosfera per Claude Code e per la tab Code dell'app di Claude, con i colori dello studio.
+
+- **Pannello accanto alla chat**, a schede: Panoramica (numeri della settimana con il loro andamento, cose da fare, i tuoi progetti), Social (visualizzazioni giorno per giorno su Instagram e Facebook, i clienti), Siti (stato e avvisi), Piani (scadenze e prossime uscite) e Consumi (il tuo limite del mese, le spese per attività e quelle del team). Le schede Social, Siti e Piani compaiono a chi ha la sezione Dashboard.
+- **Agenti sopra il prompt**: Lilla, Otto, Rocco e Bea con la loro illustrazione. Scegli un agente e uno dei suoi lavori, e la richiesta è pronta nel campo, mai inviata da sola.
+- **Agenti al lavoro**: mentre un agente lavora, il pannello mostra a che passo è, con la barra di avanzamento calcolata sui passi del suo lavoro, il tempo, i token e la spesa della sessione.
 
 I dati arrivano dal connettore di Noosfera che hai già collegato a Claude, con il tuo accesso: ognuno vede i suoi. La mod non contiene chiavi né dati. Senza un accesso a Noosfera il pannello resta vuoto.
 
@@ -27,7 +31,7 @@ Serve il connettore di Noosfera collegato a Claude (indirizzo `https://studio.ma
 ## Uso
 
 - Il pannello si apre da solo all'inizio di ogni sessione; `/noosfera` lo riapre e lo aggiorna.
-- I suggerimenti sopra il prompt si scelgono con un clic o con i tasti 1, 2 e 3; «Nascondi» li toglie, `/noosfera` li rimette.
+- Gli agenti sopra il prompt si scelgono con un clic o con i tasti numerici; «Nascondi» li toglie, `/noosfera` li rimette.
 
 ## Modalità Auto
 
