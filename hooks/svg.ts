@@ -330,3 +330,23 @@ export function sectionTitle(text: string, count?: number): string {
     <text x="10" y="16" fill="${C.text}" font-size="12.5" font-weight="700">${esc(text)}${count !== undefined ? `<tspan fill="${C.t3}" font-weight="400">  ${count}</tspan>` : ''}</text>
   </svg>`)
 }
+
+/**
+ * The same drawing at its last frame: every one-shot animation (fill="freeze") lands on its end value.
+ * A redraw that brings no new data uses it, so the charts do not grow again at every redraw.
+ */
+export function settle(svg: string): string {
+  return svg
+    .replace(/<([a-zA-Z]+)(\s[^<>]*?)>((?:\s*<animate\b[^>]*fill="freeze"[^>]*\/>)+)/g, (_all, tag: string, attrs: string, anims: string) => {
+      let out = attrs
+      for (const a of anims.match(/<animate\b[^>]*\/>/g) ?? []) {
+        const name = /attributeName="([^"]+)"/.exec(a)?.[1]
+        const to = /\sto="([^"]*)"/.exec(a)?.[1]
+        if (!name || to === undefined) continue
+        const at = new RegExp(`(\\s${name}=")[^"]*"`)
+        out = at.test(out) ? out.replace(at, `$1${to}"`) : `${out} ${name}="${to}"`
+      }
+      return `<${tag}${out}>`
+    })
+    .replace(/<animate\b[^>]*fill="freeze"[^>]*\/>/g, '')
+}

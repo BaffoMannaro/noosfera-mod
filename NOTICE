@@ -1,0 +1,14 @@
+Noosfera, mod per Claude Code
+Copyright 2026 Mauro Dev. Licenza MIT (LICENSE).
+
+hooks/token-weather-usage.mjs viene da Token Weather Usage 3.18.0 di Eric Cologni
+(https://github.com/augiefra/claude-mods), con licenza Apache-2.0
+(https://www.apache.org/licenses/LICENSE-2.0). Resta sotto quella licenza.
+Modifica fatta qui: la riga dei consumi si mostra o si nasconde dal pulsante
+della mod Noosfera (setUsageShown); il resto è com'era.
+
+Token Weather Usage riprende a sua volta:
+- Token Weather, esempio di Anthropic PBC (claude-code-playground), Apache-2.0;
+- agentpane di Anji Xu (https://github.com/xuanji86/claude-agentpane), MIT;
+- le idee di usage-meter (HolyGrail) e prompt-cache-control (Daniel San),
+  senza copiarne il codice.

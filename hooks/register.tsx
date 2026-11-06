@@ -2,7 +2,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Agent, Entry, Job, Load, Panel, Run, Suggestion, Tab } from '../types'
-import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, short, trend } from './svg'
+import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, settle, short, trend } from './svg'
+// @ts-ignore: plain JavaScript, Apache-2.0 (see NOTICE).
+import { register as registerUsage, setUsageShown, stackUsage, usageLine, usageSessionStart, usageTurnComplete } from './token-weather-usage.mjs'
 
 // Drawings go as images (no isInteractive): an interactive frame without a height stays 150px
 // tall and shrinks a taller drawing; an image takes the pane's width, and SMIL still runs.
@@ -26,6 +28,8 @@ const tab = atom({ plugin: 'noosfera', key: 'tab' } as const, 'overview' as Tab)
 const picked = atom({ plugin: 'noosfera', key: 'picked' } as const, null as string | null)
 const runs = atom({ plugin: 'noosfera', key: 'runs' } as const, [], { shape: 'runs-1' })
 const tick = atom({ plugin: 'noosfera', key: 'tick' } as const, 0)
+const usageHidden = atom({ plugin: 'noosfera', key: 'usageHidden' } as const, false)
+const client = atom({ plugin: 'noosfera', key: 'client' } as const, 'all')
 
 const fold = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
@@ -120,6 +124,8 @@ function advance(run: Run, agent: Agent | undefined, feature: string): Run {
 let server: string | null = null
 let busy = false
 let ticker: { cancel: () => void } | null = null
+// What the pane drew last (tab, client, reading): the same again draws the charts at rest.
+let drawn = ''
 
 /** The connector's name as /mcp lists it: the server whose studio_run knows our feature. */
 async function call($: EngineInterface, name: string): Promise<{ panel: Panel | null; why: string }> {
@@ -204,11 +210,20 @@ async function meter($: EngineInterface): Promise<{ tokens: number; cost: number
   return { tokens: u?.context.tokens ?? 0, cost: u?.cost?.usd ?? 0 }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // Claude's consumption above the prompt (token-weather-usage, NOTICE): registered first, so its
+  // line sits above the agents.
+  registerUsage(on, { ...options, language: 'it', goPill: true })
+
   on('session.start', async ($, e, next) => {
-    const ran = await next(e)
+    const ran = await usageSessionStart($, e, next)
     await $.command.register({ name: 'noosfera', description: 'Apre il pannello di Noosfera e lo aggiorna' })
     if ((await $.store.get('bandHidden')) === true) await update($, bandHidden, () => true)
+    const hideUsage = (await $.store.get('usageHidden')) === true
+    setUsageShown(!hideUsage)
+    await update($, usageHidden, () => hideUsage)
+    const saved = await $.store.get('client')
+    if (typeof saved === 'string' && saved) await update($, client, () => saved)
     void $.ui.open({ id: PANE, title: TITLE })
     void refresh($)
     return ran
@@ -288,7 +303,7 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
-    const ran = await next(e)
+    const ran = await usageTurnComplete($, e, next)
     const list = await read($, runs)
     if (list.some(r => r.status === 'running')) {
       const m = await meter($)
@@ -319,12 +334,45 @@ export const register: Register = on => {
 
   // Above the prompt: the agents with their picture; one picked shows its jobs.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || e.props.isWorking || (await read($, bandHidden))) return next(e)
+    const usage = await usageLine($, e)
+    if (e.props.hasSurvey || e.props.isWorking) return stackUsage($.ui.resolve(e).Box, usage, await next(e))
+    const hidden = await read($, bandHidden)
+    const noUsage = await read($, usageHidden)
     const data = await read($, panel)
     const agents = data?.agents ?? []
-    if (!data || agents.length === 0) return next(e)
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
+    const usageButton = (
+      <Button
+        key="usage"
+        label={noUsage ? 'Mostra consumi' : 'Nascondi consumi'}
+        dimColor
+        onPress={async () => {
+          setUsageShown(noUsage)
+          await update($, usageHidden, () => !noUsage)
+          await $.store.set('usageHidden', !noUsage)
+          $.ui.invalidate('ui.render')
+        }}
+      />
+    )
+    if (hidden || !data || agents.length === 0) {
+      return stackUsage(Box, usage, (
+        <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
+          {hidden && data && agents.length > 0 && (
+            <Button
+              key="show"
+              label="Mostra agenti"
+              dimColor
+              onPress={async () => {
+                await update($, bandHidden, () => false)
+                await $.store.set('bandHidden', false)
+              }}
+            />
+          )}
+          {usageButton}
+        </Box>
+      ))
+    }
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const typed = await read($, draft)
     const chosen = await read($, picked)
@@ -333,7 +381,7 @@ export const register: Register = on => {
     const agent = agents.find(a => a.id === chosen)
 
     if (agent) {
-      return (
+      return stackUsage(Box, usage, (
         <Box flexDirection="column" gap={1}>
           <Box flexDirection="row" alignItems="center" gap={1}>
             {Svg && <Svg source={avatar(agent.avatar, agent.color, 30, false, agent.name)} alt={agent.name} width={30} height={30} />}
@@ -356,10 +404,10 @@ export const register: Register = on => {
             <Button key="back" label="Indietro" dimColor onPress={() => update($, picked, () => null)} />
           </Box>
         </Box>
-      )
+      ))
     }
 
-    return (
+    return stackUsage(Box, usage, (
       <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
         <Text dimColor>Agenti</Text>
         {agents.map((a, i) => (
@@ -376,21 +424,22 @@ export const register: Register = on => {
         ))}
         <Button
           key="hide"
-          label="Nascondi"
+          label="Nascondi agenti"
           dimColor
           onPress={async () => {
             await update($, bandHidden, () => true)
             await $.store.set('bandHidden', true)
-            $.ui.toast('Agenti di Noosfera nascosti: /noosfera li rimette.')
           }}
         />
+        {usageButton}
       </Box>
-    )
+    ))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     const { Box, Button, Link, Text } = els
+    const Select = 'Select' in els ? els.Select : null
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
     const l = await read($, load)
     const data = await read($, panel)
@@ -432,12 +481,41 @@ export const register: Register = on => {
     }
 
     const now = await $.clock.now()
-    await read($, tick)
-    const current = await read($, tab)
     const list = await read($, runs)
+    // The seconds move only while an agent works: otherwise the pane stays still.
+    if (list.some(r => r.status === 'running')) await read($, tick)
+    const current = await read($, tab)
+    const chosen = await read($, client)
     const d = data.dashboard
     const tabs = TABS.filter(t => t.id === 'overview' || t.id === 'usage' || (d && (t.id !== 'social' || (d.social?.length ?? 0) > 0)))
     const shown = tabs.some(t => t.id === current) ? current : 'overview'
+    // Charts grow when something new arrives (a reading, another tab or client); a redraw with
+    // the same data draws them at rest, so they do not start over every second.
+    const key = `${shown}|${chosen}|${l.state === 'ok' ? l.at : l.state}`
+    const fresh = key !== drawn
+    drawn = key
+    const art = (svg: string) => (fresh ? svg : settle(svg))
+
+    // The clients the Social and Sites tabs can show: those with social linked or a site.
+    const clients = new Map<string, string>()
+    for (const c of d?.social ?? []) if (c.key) clients.set(c.key, c.name)
+    for (const s of d?.sites ?? []) if (s.client_key && s.client) clients.set(s.client_key, s.client)
+    const who = clients.has(chosen) ? chosen : 'all'
+    const picker = Select && clients.size > 1 && (shown === 'social' || shown === 'sites')
+      ? (
+          <Select
+            key="client"
+            label="Cliente"
+            value={who}
+            options={[{ value: 'all', label: 'Tutti i clienti' }, ...[...clients].sort((a, b) => a[1].localeCompare(b[1], 'it')).map(([value, label]) => ({ value, label }))]}
+            onSelect={async (v: string) => {
+              await update($, client, () => v)
+              await $.store.set('client', v)
+            }}
+          />
+        )
+      : null
+
     const status = l.state === 'loading' ? 'aggiorno…' : l.state === 'ok' ? (now - l.at < 60_000 ? 'aggiornato ora' : `aggiornato ${Math.round((now - l.at) / 60_000)} min fa`) : ''
 
     const row = (key: string, href: string, left: string, right: string, accent?: string) => (
@@ -476,12 +554,12 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           {k && Svg && (
             <Svg
-              source={kpis([
+              source={art(kpis([
                 { label: 'Visualizzazioni', value: short(k.views.current), trend: trend(k.views), spark: views },
                 { label: 'Interazioni', value: short(k.interactions.current), trend: trend(k.interactions), spark: inter, color: C.yellow },
                 { label: 'Visite ai siti', value: short(k.sessions.current), trend: trend(k.sessions), sub: k.sessions.previous !== null ? `settimana prima ${short(k.sessions.previous)}` : 'ultimi 7 giorni' },
                 { label: 'Contatti', value: short(k.contacts.current), trend: trend(k.contacts), sub: k.contacts.previous !== null ? `settimana prima ${short(k.contacts.previous)}` : 'dai moduli dei siti' },
-              ])}
+              ]))}
               alt="Numeri degli ultimi 7 giorni"
             />
           )}
@@ -494,15 +572,42 @@ export const register: Register = on => {
         </Box>
       )
     } else if (shown === 'social' && d) {
-      const chart = d.chart
-      body = (
+      const one = who === 'all' ? null : d.social?.find(c => c.key === who) ?? null
+      const chart = one ? one.chart ?? null : d.chart
+      const sum = (rows?: Record<string, (number | null)[]>) => chart ? chart.days.map((_, i) => Object.values(rows ?? {}).reduce((n, v) => n + (v[i] ?? 0), 0)) : undefined
+      body = one ? (
+        <Box flexDirection="column" gap={1}>
+          {Svg && (
+            <Svg
+              source={art(kpis([
+                { label: 'Visualizzazioni', value: short(one.views.current), trend: trend(one.views), spark: sum(chart?.views) },
+                { label: 'Interazioni', value: short(one.interactions.current), trend: trend(one.interactions), spark: sum(chart?.interactions), color: C.yellow },
+                { label: 'Follower', value: one.followers !== null ? short(one.followers) : 'n.d.', sub: one.networks.map(n => (n === 'instagram' ? 'Instagram' : 'Facebook')).join(' e ') },
+                { label: 'Nuovi follower', value: one.followers_change !== null ? `${one.followers_change > 0 ? '+' : ''}${short(one.followers_change)}` : 'n.d.', sub: 'ultimi 7 giorni' },
+              ]))}
+              alt={`Numeri di ${one.name}, ultimi 7 giorni`}
+            />
+          )}
+          {chart && Svg && (
+            <Svg
+              source={art(dailyBars('Visualizzazioni, 14 giorni', chart.days, [
+                { color: C.ig, values: chart.views.instagram ?? [] },
+                { color: C.fb, values: chart.views.facebook ?? [] },
+              ]))}
+              alt={`Visualizzazioni di ${one.name} giorno per giorno`}
+            />
+          )}
+          {!Svg && <Text>{`${one.name}: ${short(one.views.current)} viste ${trend(one.views).text}`.trim()}</Text>}
+          <Link href={one.link}>{`Apri i social di ${one.name}`}</Link>
+        </Box>
+      ) : (
         <Box flexDirection="column" gap={1}>
           {chart && Svg && (
             <Svg
-              source={dailyBars('Visualizzazioni, 14 giorni', chart.days, [
+              source={art(dailyBars('Visualizzazioni, 14 giorni', chart.days, [
                 { color: C.ig, values: chart.views.instagram ?? [] },
                 { color: C.fb, values: chart.views.facebook ?? [] },
-              ])}
+              ]))}
               alt="Visualizzazioni giorno per giorno"
             />
           )}
@@ -514,23 +619,25 @@ export const register: Register = on => {
         </Box>
       )
     } else if (shown === 'sites' && d) {
-      const total = d.sites_total ?? d.sites.length
-      const red = d.sites.filter(s => s.red > 0).length
-      const amber = d.sites.filter(s => s.red === 0 && s.amber > 0).length
+      const sites = who === 'all' ? d.sites : d.sites.filter(s => s.client_key === who)
+      const total = who === 'all' ? d.sites_total ?? d.sites.length : sites.length
+      const red = sites.filter(s => s.red > 0).length
+      const amber = sites.filter(s => s.red === 0 && s.amber > 0).length
       body = (
         <Box flexDirection="column" gap={1}>
           {Svg && (
             <Svg
-              source={pills([
+              source={art(pills([
                 { label: 'Siti', value: total, color: C.text },
                 { label: 'Va tutto bene', value: Math.max(0, total - red - amber), color: C.success },
                 { label: 'Da guardare', value: amber, color: C.warn },
                 { label: 'Gravi', value: red, color: C.danger },
-              ])}
+              ]))}
               alt="Stato dei siti"
             />
           )}
-          {d.sites.map((s, i) =>
+          {sites.length === 0 && <Text color={'subtle'}>Nessun sito per questo cliente.</Text>}
+          {sites.map((s, i) =>
             row(`s-${i}`, s.url ?? data.studio_url + '/siti', s.name,
               s.red ? `${s.red} gravi` : s.amber ? `${s.amber} da guardare` : s.performance ? `PageSpeed ${Math.round(s.performance)}` : 'ok',
               s.red ? 'error' : s.amber ? 'warning' : 'success'))}
@@ -543,12 +650,12 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           {Svg && (
             <Svg
-              source={pills([
+              source={art(pills([
                 { label: 'In ritardo', value: uc.late ?? 0, color: C.danger },
                 { label: 'In scadenza', value: uc.due_soon ?? 0, color: C.warn },
                 { label: 'Da pubblicare', value: uc.ready_unpublished ?? 0, color: C.success },
                 { label: 'Dal cliente', value: uc.awaiting_client ?? 0, color: C.t2 },
-              ])}
+              ]))}
               alt="Scadenze dei piani"
             />
           )}
@@ -571,17 +678,17 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           {u && Svg && (
             <Svg
-              source={ring(
+              source={art(ring(
                 u.percent,
                 u.scope === 'personal' ? 'Il tuo limite del mese' : 'Budget del team',
                 mine ? `${money(mine.spent_usd)} spesi da te` : `${u.percent}% usato`,
                 team ? `Team: ${money(team.spent_usd)} su ${money(team.budget_usd)}` : `Si azzera il ${u.resets_at.slice(8, 10)}/${u.resets_at.slice(5, 7)}`,
-              )}
+              ))}
               alt="Consumi del mese"
             />
           )}
-          {acts.length > 0 && Svg && <Svg source={hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) })))} alt="Spese per attività" />}
-          {people.length > 0 && Svg && <Svg source={hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 })))} alt="Spese del team" />}
+          {acts.length > 0 && Svg && <Svg source={art(hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) }))))} alt="Spese per attività" />}
+          {people.length > 0 && Svg && <Svg source={art(hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 }))))} alt="Spese del team" />}
           {!u && !mine && <Text color={'subtle'}>Nessun dato sui consumi.</Text>}
         </Box>
       )
@@ -596,6 +703,7 @@ export const register: Register = on => {
             <Button key={`tab-${t.id}`} label={t.label} variant={t.id === shown ? 'primary' : undefined} dimColor={t.id !== shown} onPress={() => update($, tab, () => t.id)} />
           ))}
         </Box>
+        {picker}
         {body as never}
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Link href={`${data.studio_url}/dashboard`}>Apri Noosfera</Link>

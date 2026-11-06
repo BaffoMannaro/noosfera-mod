@@ -47,8 +47,8 @@ export type Panel = {
     urgent_counts: Record<string, number>
     urgent: Entry[]
     upcoming: Entry[]
-    social?: { name: string; networks: string[]; views: Pair; interactions: Pair; followers: number | null; followers_change: number | null; link: string }[]
-    sites: { name: string; url?: string; red: number; amber: number; performance?: number | null; sessions?: Pair | null; contacts?: number | null; checked?: string | null }[]
+    social?: { key?: string; chart?: { days: string[]; views: Record<string, (number | null)[]>; interactions: Record<string, (number | null)[]> } | null; name: string; networks: string[]; views: Pair; interactions: Pair; followers: number | null; followers_change: number | null; link: string }[]
+    sites: { name: string; url?: string; client_key?: string | null; client?: string | null; red: number; amber: number; performance?: number | null; sessions?: Pair | null; contacts?: number | null; checked?: string | null }[]
     sites_total?: number
     sites_alerts?: number
     my_month: { spent_usd: number; limit_usd: number | null; activities?: Record<string, number> } | null
@@ -100,6 +100,10 @@ declare module 'claude-code' {
       picked: string | null
       runs: Shaped<Run[]>
       tick: number
+      /** The consumption band of token-weather-usage, hidden from the Noosfera band. */
+      usageHidden: boolean
+      /** The client the Social and Sites tabs show: a client key, or 'all'. */
+      client: string
     }
   }
 }
