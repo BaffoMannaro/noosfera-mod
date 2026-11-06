@@ -350,3 +350,12 @@ export function settle(svg: string): string {
     })
     .replace(/<animate\b[^>]*fill="freeze"[^>]*\/>/g, '')
 }
+
+/** The eye of the band's hide and show buttons: open while the section shows, crossed while hidden. */
+export function eye(open: boolean): string {
+  const slash = open ? '' : `<path d="M4 20 20 4" fill="none" stroke="${C.t2}" stroke-width="2" stroke-linecap="round"/>`
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24">
+    <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="${C.t2}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="12" cy="12" r="3" fill="${open ? C.lime : 'none'}" stroke="${C.t2}" stroke-width="2"/>${slash}
+  </svg>`)
+}
