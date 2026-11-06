@@ -4,6 +4,8 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Agent, Entry, Job, Load, Panel, Run, Suggestion, Tab } from '../types'
 import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, short, trend } from './svg'
 
+// Drawings go as images (no isInteractive): an interactive frame without a height stays 150px
+// tall and shrinks a taller drawing; an image takes the pane's width, and SMIL still runs.
 // Noosfera beside the chat: the person's corner of the Dashboard in a pane, in tabs, and above
 // the prompt the agents with their jobs; while an agent works the pane follows its steps.
 // Everything comes from the Noosfera connector the person already uses (feature
@@ -461,7 +463,7 @@ export const register: Register = on => {
       const a = data.agents?.find(x => x.id === r.agent)
       if (!a) return null
       return Svg
-        ? <Svg key={`run-${r.id}`} source={runCard(r, a.name, a.nickname, a.color, a.avatar, now)} alt={`${a.name}: ${r.title}`} isInteractive />
+        ? <Svg key={`run-${r.id}`} source={runCard(r, a.name, a.nickname, a.color, a.avatar, now)} alt={`${a.name}: ${r.title}`} />
         : <Text key={`run-${r.id}`}>{a.name}: {r.title} ({r.steps.filter(s => s.done).length}/{r.steps.length})</Text>
     })
 
@@ -481,7 +483,6 @@ export const register: Register = on => {
                 { label: 'Contatti', value: short(k.contacts.current), trend: trend(k.contacts), sub: k.contacts.previous !== null ? `settimana prima ${short(k.contacts.previous)}` : 'dai moduli dei siti' },
               ])}
               alt="Numeri degli ultimi 7 giorni"
-              isInteractive
             />
           )}
           {d && title('Da fare', d.urgent.length)}
@@ -503,7 +504,6 @@ export const register: Register = on => {
                 { color: C.fb, values: chart.views.facebook ?? [] },
               ])}
               alt="Visualizzazioni giorno per giorno"
-              isInteractive
             />
           )}
           {title('Clienti', d.social?.length ?? 0)}
@@ -578,11 +578,10 @@ export const register: Register = on => {
                 team ? `Team: ${money(team.spent_usd)} su ${money(team.budget_usd)}` : `Si azzera il ${u.resets_at.slice(8, 10)}/${u.resets_at.slice(5, 7)}`,
               )}
               alt="Consumi del mese"
-              isInteractive
             />
           )}
-          {acts.length > 0 && Svg && <Svg source={hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) })))} alt="Spese per attività" isInteractive />}
-          {people.length > 0 && Svg && <Svg source={hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 })))} alt="Spese del team" isInteractive />}
+          {acts.length > 0 && Svg && <Svg source={hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) })))} alt="Spese per attività" />}
+          {people.length > 0 && Svg && <Svg source={hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 })))} alt="Spese del team" />}
           {!u && !mine && <Text color={'subtle'}>Nessun dato sui consumi.</Text>}
         </Box>
       )
@@ -590,7 +589,7 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {Svg ? <Svg source={header(data.me.name, status, l.state === 'ok')} alt={`Noosfera, ciao ${data.me.name}`} isInteractive /> : <Text bold>{`Noosfera · Ciao ${data.me.name}`}</Text>}
+        {Svg ? <Svg source={header(data.me.name, status, l.state === 'ok')} alt={`Noosfera, ciao ${data.me.name}`} /> : <Text bold>{`Noosfera · Ciao ${data.me.name}`}</Text>}
         {runsView}
         <Box flexDirection="row" flexWrap="wrap" gap={1}>
           {tabs.map(t => (
