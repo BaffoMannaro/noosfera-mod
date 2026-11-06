@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Agent, Entry, Job, Load, Panel, Run, Suggestion, Tab } from '../types'
-import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, sectionTitle, short, trend } from './svg'
+import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, short, trend } from './svg'
 
 // Noosfera beside the chat: the person's corner of the Dashboard in a pane, in tabs, and above
 // the prompt the agents with their jobs; while an agent works the pane follows its steps.
@@ -207,13 +207,13 @@ export const register: Register = on => {
     const ran = await next(e)
     await $.command.register({ name: 'noosfera', description: 'Apre il pannello di Noosfera e lo aggiorna' })
     if ((await $.store.get('bandHidden')) === true) await update($, bandHidden, () => true)
-    void $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
+    void $.ui.open({ id: PANE, title: TITLE })
     void refresh($)
     return ran
   })
 
   on('command.run', { command: 'noosfera' }, async $ => {
-    await $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
+    await $.ui.open({ id: PANE, title: TITLE })
     await update($, bandHidden, () => false)
     await $.store.set('bandHidden', false)
     await refresh($)
@@ -257,7 +257,7 @@ export const register: Register = on => {
         }
         await update($, runs, list => [run, ...list.filter(r => r.status !== 'done' || r.agent !== agent.id)].slice(0, 3))
         await update($, picked, () => null)
-        void $.ui.open({ id: PANE, title: TITLE, backgroundColor: C.bg })
+        void $.ui.open({ id: PANE, title: TITLE })
         if (!ticker) ticker = $.clock.every(1000, () => void update($, tick, n => n + 1))
       }
       return next(e)
@@ -365,7 +365,7 @@ export const register: Register = on => {
             {Svg && <Svg source={avatar(a.avatar, a.color, 28, a.id === hint, a.name)} alt={a.name} width={28} height={28} />}
             <Button
               key={`b-${a.id}`}
-              label={a.nickname || a.name}
+              label={a.nickname ? `${a.nickname} · ${a.name}` : a.name}
               hotkey={String(i + 1)}
               variant={a.id === hint ? 'primary' : undefined}
               onPress={() => update($, picked, () => a.id)}
@@ -398,11 +398,11 @@ export const register: Register = on => {
       if (l.state === 'auto') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold color={C.text}>Un permesso per la modalità Auto</Text>
-            <Text wrap="wrap" color={C.t2}>In modalità Auto Claude Code blocca la lettura del pannello finché non la permetti. Si fa una volta sola:</Text>
-            <Text wrap="wrap" color={C.t2}>1. Premi «Prepara la richiesta», invia il messaggio e accetta se Claude chiede conferma.</Text>
-            <Text wrap="wrap" color={C.t2}>2. Se Claude risponde che la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale (in basso, accanto al modello), invia di nuovo e poi torna ad Auto.</Text>
-            <Text wrap="wrap" color={C.t2}>3. Premi Aggiorna.</Text>
+            <Text bold color={'text'}>Un permesso per la modalità Auto</Text>
+            <Text wrap="wrap" color={'subtle'}>In modalità Auto Claude Code blocca la lettura del pannello finché non la permetti. Si fa una volta sola:</Text>
+            <Text wrap="wrap" color={'subtle'}>1. Premi «Prepara la richiesta», invia il messaggio e accetta se Claude chiede conferma.</Text>
+            <Text wrap="wrap" color={'subtle'}>2. Se Claude risponde che la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale (in basso, accanto al modello), invia di nuovo e poi torna ad Auto.</Text>
+            <Text wrap="wrap" color={'subtle'}>3. Premi Aggiorna.</Text>
             <Button key="ask-allow" label="Prepara la richiesta" variant="primary" onPress={() => $.prompt.fill({ text: allowRequest(l.tools), mode: 'replace' })} />
             {again}
           </Box>
@@ -411,8 +411,8 @@ export const register: Register = on => {
       if (l.state === 'missing') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold color={C.text}>Noosfera non è collegato qui</Text>
-            <Text wrap="wrap" color={C.t2}>Collega il connettore di Noosfera a Claude (Impostazioni, Connettori, indirizzo studio.maurodev.it/api/mcp), poi premi Aggiorna.</Text>
+            <Text bold color={'text'}>Noosfera non è collegato qui</Text>
+            <Text wrap="wrap" color={'subtle'}>Collega il connettore di Noosfera a Claude (Impostazioni, Connettori, indirizzo studio.maurodev.it/api/mcp), poi premi Aggiorna.</Text>
             {again}
           </Box>
         )
@@ -420,13 +420,13 @@ export const register: Register = on => {
       if (l.state === 'error') {
         return (
           <Box flexDirection="column" gap={1}>
-            <Text bold color={C.text}>Non riesco a leggere Noosfera</Text>
-            <Text wrap="wrap" color={C.t3}>{l.message}</Text>
+            <Text bold color={'text'}>Non riesco a leggere Noosfera</Text>
+            <Text wrap="wrap" color={'subtle'}>{l.message}</Text>
             {again}
           </Box>
         )
       }
-      return <Text color={C.t3}>Leggo la tua dashboard di Noosfera…</Text>
+      return <Text color={'subtle'}>Leggo la tua dashboard di Noosfera…</Text>
     }
 
     const now = await $.clock.now()
@@ -439,14 +439,22 @@ export const register: Register = on => {
     const status = l.state === 'loading' ? 'aggiorno…' : l.state === 'ok' ? (now - l.at < 60_000 ? 'aggiornato ora' : `aggiornato ${Math.round((now - l.at) / 60_000)} min fa`) : ''
 
     const row = (key: string, href: string, left: string, right: string, accent?: string) => (
-      <Box key={key} flexDirection="row" justifyContent="space-between" paddingX={1} backgroundColor={C.s1} hover={{ backgroundColor: C.s3 }}>
+      <Box key={key} flexDirection="row" justifyContent="space-between" gap={1}>
         <Link href={href}>{left}</Link>
-        <Text color={accent ?? C.t3}>{right}</Text>
+        <Text color={accent ?? 'subtle'}>{right}</Text>
+      </Box>
+    )
+
+    const title = (text: string, count?: number) => (
+      <Box key={`h-${text}`} flexDirection="row" gap={1} marginTop={1}>
+        <Text bold color="success">▍</Text>
+        <Text bold>{text}</Text>
+        {count !== undefined && <Text color="subtle">{String(count)}</Text>}
       </Box>
     )
 
     const entries = (items: Entry[], prefix: string) =>
-      items.map((u, i) => row(`${prefix}-${i}`, u.link, `${u.client}: ${u.title}`, u.flags[0] ? `${when(u)} · ${FLAG[u.flags[0]] ?? u.flags[0]}` : when(u), u.flags.includes('late') ? C.danger : u.days_left <= 1 ? C.yellow : C.t3))
+      items.map((u, i) => row(`${prefix}-${i}`, u.link, `${u.client}: ${u.title}`, u.flags[0] ? `${when(u)} · ${FLAG[u.flags[0]] ?? u.flags[0]}` : when(u), u.flags.includes('late') ? 'error' : u.days_left <= 1 ? 'warning' : 'subtle'))
 
     // Agents at work, above everything while they run.
     const runsView = list.slice(0, 2).map(r => {
@@ -476,11 +484,11 @@ export const register: Register = on => {
               isInteractive
             />
           )}
-          {d && Svg && <Svg source={sectionTitle('Da fare', d.urgent.length)} alt="Da fare" />}
-          {d && d.urgent.length === 0 && <Text color={C.t3}>Niente di urgente nei piani.</Text>}
+          {d && title('Da fare', d.urgent.length)}
+          {d && d.urgent.length === 0 && <Text color={'subtle'}>Niente di urgente nei piani.</Text>}
           {d && entries(d.urgent.slice(0, 4), 'u')}
-          {Svg && <Svg source={sectionTitle('I tuoi progetti', data.projects.mine)} alt="I tuoi progetti" />}
-          {data.projects.latest.length === 0 && <Text color={C.t3}>Ancora nessun progetto tuo.</Text>}
+          {title('I tuoi progetti', data.projects.mine)}
+          {data.projects.latest.length === 0 && <Text color={'subtle'}>Ancora nessun progetto tuo.</Text>}
           {data.projects.latest.map((p, i) => row(`p-${i}`, p.link, p.name, p.client && p.client !== p.name ? p.client : ''))}
         </Box>
       )
@@ -498,10 +506,10 @@ export const register: Register = on => {
               isInteractive
             />
           )}
-          {Svg && <Svg source={sectionTitle('Clienti', d.social?.length ?? 0)} alt="Clienti" />}
+          {title('Clienti', d.social?.length ?? 0)}
           {(d.social ?? []).map((c, i) => {
             const t = trend(c.views)
-            return row(`c-${i}`, c.link, c.name, `${short(c.views.current)} viste ${t.text}`.trim(), t.up === false ? C.danger : t.up ? C.limeText : C.t3)
+            return row(`c-${i}`, c.link, c.name, `${short(c.views.current)} viste ${t.text}`.trim(), t.up === false ? 'error' : t.up ? 'success' : 'subtle')
           })}
         </Box>
       )
@@ -525,7 +533,7 @@ export const register: Register = on => {
           {d.sites.map((s, i) =>
             row(`s-${i}`, s.url ?? data.studio_url + '/siti', s.name,
               s.red ? `${s.red} gravi` : s.amber ? `${s.amber} da guardare` : s.performance ? `PageSpeed ${Math.round(s.performance)}` : 'ok',
-              s.red ? C.danger : s.amber ? C.warn : C.success))}
+              s.red ? 'error' : s.amber ? 'warning' : 'success'))}
           <Link href={`${data.studio_url}/siti`}>Apri la tab Siti</Link>
         </Box>
       )
@@ -537,18 +545,18 @@ export const register: Register = on => {
             <Svg
               source={pills([
                 { label: 'In ritardo', value: uc.late ?? 0, color: C.danger },
-                { label: 'In scadenza', value: uc.due_soon ?? 0, color: C.yellow },
-                { label: 'Da pubblicare', value: uc.ready_unpublished ?? 0, color: C.lime },
+                { label: 'In scadenza', value: uc.due_soon ?? 0, color: C.warn },
+                { label: 'Da pubblicare', value: uc.ready_unpublished ?? 0, color: C.success },
                 { label: 'Dal cliente', value: uc.awaiting_client ?? 0, color: C.t2 },
               ])}
               alt="Scadenze dei piani"
             />
           )}
-          {Svg && <Svg source={sectionTitle('Da fare', d.urgent.length)} alt="Da fare" />}
-          {d.urgent.length === 0 && <Text color={C.t3}>Niente di urgente.</Text>}
+          {title('Da fare', d.urgent.length)}
+          {d.urgent.length === 0 && <Text color={'subtle'}>Niente di urgente.</Text>}
           {entries(d.urgent, 'pu')}
-          {Svg && <Svg source={sectionTitle('Prossime uscite', d.upcoming.length)} alt="Prossime uscite" />}
-          {d.upcoming.length === 0 && <Text color={C.t3}>Nessuna uscita nei prossimi 14 giorni.</Text>}
+          {title('Prossime uscite', d.upcoming.length)}
+          {d.upcoming.length === 0 && <Text color={'subtle'}>Nessuna uscita nei prossimi 14 giorni.</Text>}
           {entries(d.upcoming, 'pn')}
           <Link href={`${data.studio_url}/piani?vista=calendario`}>Apri il calendario dei piani</Link>
         </Box>
@@ -575,7 +583,7 @@ export const register: Register = on => {
           )}
           {acts.length > 0 && Svg && <Svg source={hbars('Le tue spese per attività', acts.map(([k, v]) => ({ label: ACTIVITY[k] ?? k, value: v, text: money(v) })))} alt="Spese per attività" isInteractive />}
           {people.length > 0 && Svg && <Svg source={hbars('Il team questo mese', people.map(p => ({ label: p.name, value: p.spent_usd, text: money(p.spent_usd), strong: p.me, color: p.me ? C.lime : C.t3 })))} alt="Spese del team" isInteractive />}
-          {!u && !mine && <Text color={C.t3}>Nessun dato sui consumi.</Text>}
+          {!u && !mine && <Text color={'subtle'}>Nessun dato sui consumi.</Text>}
         </Box>
       )
     }
@@ -592,7 +600,7 @@ export const register: Register = on => {
         {body as never}
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Link href={`${data.studio_url}/dashboard`}>Apri Noosfera</Link>
-          {l.state === 'loading' ? <Text color={C.t3}>aggiorno…</Text> : again}
+          {l.state === 'loading' ? <Text color={'subtle'}>aggiorno…</Text> : again}
         </Box>
       </Box>
     )

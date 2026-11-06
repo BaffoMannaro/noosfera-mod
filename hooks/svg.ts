@@ -4,23 +4,45 @@
 
 import type { Pair, Run } from '../types'
 
+// Colours that change with the theme are CSS variables, set by `themed` for light and dark
+// (the studio's two palettes); the lime, the networks' and the agents' colours stay the same.
 export const C = {
-  bg: '#0a0b0a',
-  s1: '#111311',
-  s2: '#171a17',
-  s3: '#212521',
-  edge: '#262a26',
-  text: '#f1f4ee',
-  t2: '#b6bdb1',
-  t3: '#8b9387',
+  bg: 'var(--bg)',
+  s1: 'var(--s1)',
+  s2: 'var(--s2)',
+  s3: 'var(--s3)',
+  edge: 'var(--edge)',
+  text: 'var(--tx)',
+  t2: 'var(--t2)',
+  t3: 'var(--t3)',
   lime: '#8fe35a',
-  limeText: '#a6ef77',
-  yellow: '#f2e14c',
-  danger: '#f28b8f',
-  warn: '#ecc659',
-  success: '#5bc894',
+  limeText: 'var(--acct)',
+  mark: 'var(--mark)',
+  yellow: 'var(--yl)',
+  danger: 'var(--dg)',
+  warn: 'var(--wn)',
+  success: 'var(--ok)',
   ig: '#E1306C',
   fb: '#1877F2',
+}
+
+const LIGHT = '--bg:#f3f4f0;--s1:#fbfbf8;--s2:#ffffff;--s3:#e9ebe4;--edge:#dcdfd6;--tx:#101210;--t2:#424941;--t3:#596157;--acct:#2e6a12;--mark:#4f9f24;--yl:#d6c22e;--dg:#b8322c;--wn:#8a5a00;--ok:#186b45'
+const DARK = '--bg:#0a0b0a;--s1:#111311;--s2:#171a17;--s3:#212521;--edge:#262a26;--tx:#f1f4ee;--t2:#b6bdb1;--t3:#8b9387;--acct:#a6ef77;--mark:#8fe35a;--yl:#f2e14c;--dg:#f28b8f;--wn:#ecc659;--ok:#5bc894'
+
+/**
+ * Gives a drawing both palettes: light by default, dark when the app is dark
+ * (prefers-color-scheme), and turns var() colours into style properties, which SVG reads.
+ */
+export function themed(svg: string): string {
+  const out = svg.replace(/<([a-zA-Z]+)((?:\s[^<>]*?)?)(\/?)>/g, (tag, name: string, attrs: string, close: string) => {
+    const props: string[] = []
+    const rest = attrs.replace(/\s(fill|stroke|stop-color)="(var\(--[a-z0-9]+\))"/g, (_m, k: string, v: string) => {
+      props.push(`${k}:${v}`)
+      return ''
+    })
+    return props.length ? `<${name}${rest} style="${props.join(';')}"${close}>` : tag
+  })
+  return out.replace(/^(<svg[^>]*>)/, `$1<style>svg{${LIGHT}}@media (prefers-color-scheme: dark){svg{${DARK}}}</style>`)
 }
 
 const FONT = `font-family="Geist, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"`
@@ -74,14 +96,14 @@ function halftone(x0: number, y0: number, w: number, h: number, color: string, s
 function mark(x: number, y: number, h: number): string {
   const s = h / 400
   return `<g transform="translate(${x} ${y}) scale(${s})">
-    <path d="M176 188 L296 34 L296 370" fill="none" stroke="${C.lime}" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M176 188 L296 34 L296 370" fill="none" stroke="${C.mark}" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
     <polygon points="28,30 28,370 164,198" fill="${C.text}" stroke="${C.text}" stroke-width="28" stroke-linejoin="round"/>
   </g>`
 }
 
 /** The pane's head: the mark, the name, the greeting and a live dot. */
 export function header(name: string, status: string, live: boolean): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="74" viewBox="0 0 ${W} 74" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} 74" ${FONT}>
   <defs>
     <linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${C.s2}"/><stop offset="1" stop-color="${C.bg}"/></linearGradient>
     <clipPath id="hc"><rect width="${W}" height="74" rx="16"/></clipPath>
@@ -103,7 +125,7 @@ export function header(name: string, status: string, live: boolean): string {
   </g>
   <rect x="${W - 34 - status.length * 5.6}" y="44" width="${status.length * 5.6 + 18}" height="18" rx="9" fill="${C.bg}" opacity="0.85"/>
   <text x="${W - 25}" y="57" fill="${C.t2}" font-size="10.5" text-anchor="end">${esc(status)}</text>
-</svg>`
+</svg>`)
 }
 
 function sparkPath(values: number[], x: number, y: number, w: number, h: number): string {
@@ -141,7 +163,7 @@ export function kpis(tiles: { label: string; value: string; trend?: { text: stri
       </path>` : ''}
     </g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${height}" viewBox="0 0 ${W} ${height}" ${FONT}>${body}</svg>`
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${height}" ${FONT}>${body}</svg>`)
 }
 
 /** Bars day by day, Instagram and Facebook stacked, growing from the floor. */
@@ -175,13 +197,13 @@ export function dailyBars(title: string, days: string[], series: { color: string
     }
   })
   const legend = series.length > 1 ? series.map((s, i) => `<g transform="translate(${W - 12 - (series.length - i) * 74} 20)"><circle r="4" cx="4" cy="-3.5" fill="${s.color}"/><text x="12" y="0" fill="${C.t2}" font-size="10.5">${i === 0 ? 'Instagram' : 'Facebook'}</text></g>`).join('') : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${h}" ${FONT}>
     <rect x="0.5" y="0.5" width="${W - 1}" height="${h - 1}" rx="13" fill="${C.s2}" stroke="${C.edge}"/>
     <text x="12" y="20" fill="${C.t3}" font-size="10.5" letter-spacing="0.6">${esc(title.toUpperCase())}</text>
     ${legend}
     <line x1="12" x2="${W - 12}" y1="${top + ch + 0.5}" y2="${top + ch + 0.5}" stroke="${C.edge}"/>
     ${bars}
-  </svg>`
+  </svg>`)
 }
 
 /** A ring that fills to a percent, with the figure in the middle and two lines beside it. */
@@ -191,7 +213,7 @@ export function ring(percent: number, title: string, line1: string, line2: strin
   const c = 2 * Math.PI * r
   const p = Math.max(0, Math.min(100, percent))
   const color = p >= 90 ? C.danger : p >= 70 ? C.warn : C.lime
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${h}" ${FONT}>
     <rect x="0.5" y="0.5" width="${W - 1}" height="${h - 1}" rx="13" fill="${C.s2}" stroke="${C.edge}"/>
     <g opacity="0.35">${halftone(W - 120, 0, 120, h, C.yellow, 9)}</g>
     <g transform="translate(62 58) rotate(-90)">
@@ -204,7 +226,7 @@ export function ring(percent: number, title: string, line1: string, line2: strin
     <text x="118" y="38" fill="${C.t3}" font-size="10.5" letter-spacing="0.6">${esc(title.toUpperCase())}</text>
     <text x="118" y="62" fill="${C.text}" font-size="15" font-weight="600">${esc(cut(line1, 26))}</text>
     <text x="118" y="82" fill="${C.t2}" font-size="11.5">${esc(cut(line2, 32))}</text>
-  </svg>`
+  </svg>`)
 }
 
 /** Horizontal bars that grow, one row each: who or what spent how much. */
@@ -224,11 +246,11 @@ export function hbars(title: string, rows: { label: string; value: number; text:
       </rect>
       <text x="${W - 12}" y="${y + 13}" text-anchor="end" fill="${C.t2}" font-size="11">${esc(r.text)}</text>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${h}" ${FONT}>
     <rect x="0.5" y="0.5" width="${W - 1}" height="${h - 1}" rx="13" fill="${C.s2}" stroke="${C.edge}"/>
     <text x="12" y="20" fill="${C.t3}" font-size="10.5" letter-spacing="0.6">${esc(title.toUpperCase())}</text>
     ${body}
-  </svg>`
+  </svg>`)
 }
 
 /** A row of counters in pills (what is due in the plans, the state of the sites). */
@@ -243,7 +265,7 @@ export function pills(items: { label: string; value: number; color: string }[]):
       <text x="${x + pw / 2}" y="45" text-anchor="middle" fill="${C.t3}" font-size="10">${esc(cut(it.label, 16))}</text>
     </g>`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" ${FONT}>${body}</svg>`
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${h}" ${FONT}>${body}</svg>`)
 }
 
 /** An agent's picture, with its colour behind; moving and ringed while it works. */
@@ -252,11 +274,11 @@ export function avatar(svg: string | null, color: string, size: number, active =
     ? svg.replace(/<svg[^>]*>/, `<svg x="${size * 0.06}" y="${size * 0.08}" width="${size * 0.88}" height="${size * 0.88}" viewBox="0 0 160 160">`)
     : `<text x="${size / 2}" y="${size * 0.62}" text-anchor="middle" font-size="${size * 0.4}" fill="${C.text}">${esc(label.slice(0, 1))}</text>`
   const bob = active ? `<animateTransform attributeName="transform" type="translate" values="0 0;0 -1.6;0 0" dur="1.4s" repeatCount="indefinite"/>` : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" ${FONT}>
     <circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1}" fill="${color}" opacity="0.22"/>
     ${active ? `<circle cx="${size / 2}" cy="${size / 2}" r="${size / 2 - 1.5}" fill="none" stroke="${C.lime}" stroke-width="2"><animate attributeName="opacity" values="1;0.35;1" dur="1.6s" repeatCount="indefinite"/></circle>` : ''}
     <g>${bob}${inner}</g>
-  </svg>`
+  </svg>`)
 }
 
 /** An agent at work: picture, job, real progress by its steps, time, tokens and spend. */
@@ -277,7 +299,7 @@ export function runCard(run: Run, name: string, nickname: string, color: string,
     return `<circle cx="${x.toFixed(1)}" cy="${by + 26}" r="3" fill="${s.done ? C.lime : C.s3}"/>`
   }).join('')
   const pic = avatar(picture, color, 52, live, name).replace(/^<svg[^>]*>/, '<svg x="14" y="14" width="52" height="52" viewBox="0 0 52 52">')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${h}" viewBox="0 0 ${W} ${h}" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} ${h}" ${FONT}>
     <defs>
       <pattern id="st${esc(run.id)}" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
         <rect width="12" height="12" fill="${C.lime}"/><rect width="5" height="12" fill="#b4f08a" opacity="0.55"/>
@@ -298,13 +320,13 @@ export function runCard(run: Run, name: string, nickname: string, color: string,
     ${dots}
     <text x="${bx}" y="${by + 46}" fill="${C.t3}" font-size="10.5">Passo ${Math.min(done + (live ? 1 : 0), total)} di ${total}  ·  ${clock(elapsed)}  ·  ${short(Math.max(0, run.tokens - run.startTokens))} token  ·  ${money(Math.max(0, run.cost - run.startCost))}</text>
     <text x="${W - 14}" y="${by - 6}" text-anchor="end" fill="${C.text}" font-size="11" font-weight="600">${Math.round(p * 100)}%</text>
-  </svg>`
+  </svg>`)
 }
 
 /** A small section title with a lime tick, between the drawings. */
 export function sectionTitle(text: string, count?: number): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="22" viewBox="0 0 ${W} 22" ${FONT}>
+  return themed(`<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${W} 22" ${FONT}>
     <rect x="0" y="6" width="3" height="12" rx="1.5" fill="${C.lime}"/>
     <text x="10" y="16" fill="${C.text}" font-size="12.5" font-weight="700">${esc(text)}${count !== undefined ? `<tspan fill="${C.t3}" font-weight="400">  ${count}</tspan>` : ''}</text>
-  </svg>`
+  </svg>`)
 }
