@@ -28,3 +28,7 @@ Serve il connettore di Noosfera collegato a Claude (indirizzo `https://studio.ma
 
 - Il pannello si apre da solo all'inizio di ogni sessione; `/noosfera` lo riapre e lo aggiorna.
 - I suggerimenti sopra il prompt si scelgono con un clic o con i tasti 1, 2 e 3; «Nascondi» li toglie, `/noosfera` li rimette.
+
+## Modalità Auto
+
+Con la modalità di permessi Auto, Claude Code blocca la lettura del pannello finché non la permetti, perché la chiamata al connettore non nasce da una tua richiesta. Il pannello lo dice e ha il pulsante «Prepara la richiesta»: invii il messaggio e Claude aggiunge alle tue impostazioni il permesso per lo strumento `studio_run` del connettore di Noosfera, una volta sola. Se la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale, invia di nuovo e poi torna ad Auto. Con le altre modalità non serve niente.

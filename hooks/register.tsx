@@ -68,6 +68,12 @@ const FLAG: Record<string, string> = {
   due_soon: 'in scadenza',
 }
 
+/** What the person sends to Claude to allow the pane's read under Auto mode. */
+function allowRequest(tools: string[]): string {
+  const names = tools.length ? tools.map(t => `«${t}»`).join(' oppure ') : 'studio_run del connettore di Noosfera'
+  return `Aggiungi alle mie impostazioni di Claude Code (il file ~/.claude/settings.json, nell'elenco permissions.allow) il permesso per lo strumento studio_run del connettore di Noosfera, così il pannello della mod Noosfera funziona anche in modalità Auto. Lo strumento è ${names}: se sono più di uno, scegli solo quello del connettore di Noosfera (studio.maurodev.it), non altri. Non cambiare nient'altro.`
+}
+
 /** Turns the person's draft and a suggestion into the new draft. */
 function filled(s: Suggestion, text: string): string {
   const typed = text.trim()
@@ -80,19 +86,25 @@ let server: string | null = null
 let busy = false
 
 /** The connector's name as /mcp lists it: the server whose studio_run knows our feature. */
-async function call($: EngineInterface, name: string): Promise<Panel | null> {
-  const res = await $.mcp.call(name, 'studio_run', { feature: FEATURE })
+async function call($: EngineInterface, name: string): Promise<{ panel: Panel | null; why: string }> {
+  let res: Awaited<ReturnType<EngineInterface['mcp']['call']>>
+  try {
+    res = await $.mcp.call(name, 'studio_run', { feature: FEATURE })
+  } catch (error) {
+    return { panel: null, why: `${name}: ${error instanceof Error ? error.message : String(error)}` }
+  }
   // The connector may put other blocks first (the studio's news): take the one that is the pane.
   for (const block of res.content) {
     if (block.type !== 'text' || !block.text) continue
     try {
       const data = JSON.parse(block.text) as Panel
-      if (data && data.me && Array.isArray(data.suggestions)) return data
+      if (data && data.me && Array.isArray(data.suggestions)) return { panel: data, why: '' }
     } catch {
       // not JSON: next block
     }
   }
-  return null
+  const first = res.content.find(b => b.type === 'text')?.text ?? ''
+  return { panel: null, why: `${name}: ${res.isError ? 'errore' : 'risposta'} ${first.replace(/\s+/g, ' ').slice(0, 160)}` }
 }
 
 async function refresh($: EngineInterface) {
@@ -101,25 +113,38 @@ async function refresh($: EngineInterface) {
   await update($, load, () => ({ state: 'loading' }) as Load)
   try {
     let found: Panel | null = null
+    const why: string[] = []
     const saved = server ?? ((await $.store.get('server')) as string | undefined) ?? null
-    if (saved) found = await call($, saved).catch(() => null)
-    if (found) server = saved
+    if (saved) {
+      const r = await call($, saved)
+      found = r.panel
+      if (found) server = saved
+      else why.push(r.why)
+    }
+    const tools = found ? [] : ((await $.session.usage({ breakdown: 'summary' })).context.breakdown?.mcpTools ?? [])
     if (!found) {
-      const usage = await $.session.usage({ breakdown: 'summary' })
-      const names = [...new Set((usage.context.breakdown?.mcpTools ?? []).filter(t => t.name.endsWith('__studio_run')).map(t => t.serverName))]
+      const names = [...new Set(tools.filter(t => t.name.endsWith('__studio_run')).map(t => t.serverName))].filter(n => n !== saved)
+      if (names.length === 0 && !saved) why.push(`nessun server con studio_run tra ${tools.length} strumenti MCP`)
       for (const name of names) {
-        found = await call($, name).catch(() => null)
-        if (found) {
+        const r = await call($, name)
+        if (r.panel) {
+          found = r.panel
           server = name
           await $.store.set('server', name)
           break
         }
+        why.push(r.why)
       }
     }
     if (!found) {
-      const tools = (await $.session.usage({ breakdown: 'summary' })).context.breakdown?.mcpTools ?? []
-      const known = tools.some(t => t.name.endsWith('__studio_run'))
-      const message = "Il connettore di Noosfera c'è, ma non ha ancora la funzione del pannello: arriva con il prossimo aggiornamento dello Studio. Poi premi Aggiorna."
+      const known = tools.some(t => t.name.endsWith('__studio_run')) || Boolean(saved)
+      // Auto mode: the classifier refuses a call no request of the person asked for.
+      if (why.length > 0 && why.every(w => w.includes('auto mode'))) {
+        const blocked = [...new Set(tools.filter(t => t.name.endsWith('__studio_run')).map(t => t.name))]
+        await update($, load, () => ({ state: 'auto', tools: blocked }) as Load)
+        return
+      }
+      const message = `Il connettore di Noosfera non ha risposto con i dati del pannello. ${why.join(' | ')}`
       await update($, load, () => (known ? { state: 'error', message } : { state: 'missing' }) as Load)
       return
     }
@@ -152,7 +177,12 @@ export const register: Register = on => {
     await update($, bandHidden, () => false)
     await $.store.set('bandHidden', false)
     await refresh($)
-    return { text: 'Pannello di Noosfera aperto e aggiornato.' }
+    const l = await read($, load)
+    if (l.state === 'ok') return { text: 'Pannello di Noosfera aperto e aggiornato.' }
+    if (l.state === 'error') return { text: `Pannello aperto, ma non riesco a leggere Noosfera: ${l.message}` }
+    if (l.state === 'missing') return { text: 'Pannello aperto: il connettore di Noosfera non è collegato qui.' }
+    if (l.state === 'auto') return { text: 'Pannello aperto: in modalità Auto serve un permesso, il pannello spiega come.' }
+    return { text: 'Pannello di Noosfera aperto.' }
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -225,6 +255,24 @@ export const register: Register = on => {
     const again = <Button key="refresh" label="Aggiorna" dimColor onPress={() => refresh($)} />
 
     if (!data) {
+      if (l.state === 'auto') {
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Un permesso per la modalità Auto</Text>
+            <Text wrap="wrap">In modalità Auto Claude Code blocca la lettura del pannello finché non la permetti. Si fa una volta sola:</Text>
+            <Text wrap="wrap">1. Premi «Prepara la richiesta», invia il messaggio e accetta se Claude chiede conferma.</Text>
+            <Text wrap="wrap">2. Se Claude risponde che la modalità Auto non glielo lascia fare, passa per un momento alla modalità normale (in basso, accanto al modello), invia di nuovo e poi torna ad Auto.</Text>
+            <Text wrap="wrap">3. Premi Aggiorna.</Text>
+            <Button
+              key="ask-allow"
+              label="Prepara la richiesta"
+              variant="primary"
+              onPress={() => $.prompt.fill({ text: allowRequest(l.tools), mode: 'replace' })}
+            />
+            {again}
+          </Box>
+        )
+      }
       if (l.state === 'missing') {
         return (
           <Box flexDirection="column" gap={1}>

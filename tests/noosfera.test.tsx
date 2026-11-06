@@ -32,12 +32,12 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80, scroll: { offset: 0, bodyRows: 10 } },
 } as const
 
-function engine(on: Parameters<Parameters<typeof test>[1]>[1], filledWith: string[]) {
+function engine(on: Parameters<Parameters<typeof test>[1]>[1], filledWith: string[], refuse = false) {
   on('command.register', () => ({ value: { command: 'noosfera' } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { breakdown: { mcpTools: [{ name: 'mcp__noos__studio_run', serverName: 'claude.ai Noosfera', tokens: 1, isLoaded: true }] } } } }) as never)
-  on('mcp.call', (_, e) => ({ value: e.server === 'claude.ai Noosfera' ? { content: [{ type: 'text', text: JSON.stringify(PANEL) }] } : { isError: true, content: [] } }) as never)
+  on('mcp.call', (_, e) => refuse ? ({ deny: 'The server-side auto mode classifier gave no verdict' }) : ({ value: e.server === 'claude.ai Noosfera' ? { content: [{ type: 'text', text: JSON.stringify(PANEL) }] } : { isError: true, content: [] } }) as never)
   on('prompt.read', () => ({ value: { text: 'post di natale', cursor: 0 } }) as never)
   on('prompt.fill', (_, e) => { filledWith.push(e.text); return { isFilled: true, text: e.text } as never })
   on('ui.render', ($, e) => { const { Text } = $.ui.resolve(e); return <Text>engine</Text> })
@@ -75,4 +75,16 @@ test('the band suggests the agent for the draft and fills the prompt', async ($,
     await ui.unmount()
   }
   expect(filled[0]).toBe("Usa l'agente «Social media manager» di Noosfera: post di natale")
+})
+
+test('under Auto mode the pane explains the permission and prepares the request', async ($, on) => {
+  const filled: string[] = []
+  engine(on, filled, true)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run({ command: 'noosfera', args: '' } as never)
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /modalità Auto/ }))?.text).toBe('Un permesso per la modalità Auto')
+  await ui.press({ key: 'ask-allow' })
+  await ui.unmount()
+  expect(filled[0]).toContain('mcp__noos__studio_run')
 })

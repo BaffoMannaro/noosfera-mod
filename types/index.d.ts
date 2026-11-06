@@ -45,6 +45,8 @@ export type Load =
   | { state: 'ok'; at: number }
   | { state: 'missing' }
   | { state: 'error'; message: string }
+  /** Auto mode refused the read: the tool names to allow (mcp__<server>__studio_run). */
+  | { state: 'auto'; tools: string[] }
 
 declare module 'claude-code' {
   interface PluginState {
