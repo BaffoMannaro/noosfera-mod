@@ -82,10 +82,17 @@ let busy = false
 /** The connector's name as /mcp lists it: the server whose studio_run knows our feature. */
 async function call($: EngineInterface, name: string): Promise<Panel | null> {
   const res = await $.mcp.call(name, 'studio_run', { feature: FEATURE })
-  const text = res.content.find(b => b.type === 'text')?.text
-  if (res.isError || !text) return null
-  const data = JSON.parse(text) as Panel
-  return data && data.me && Array.isArray(data.suggestions) ? data : null
+  // The connector may put other blocks first (the studio's news): take the one that is the pane.
+  for (const block of res.content) {
+    if (block.type !== 'text' || !block.text) continue
+    try {
+      const data = JSON.parse(block.text) as Panel
+      if (data && data.me && Array.isArray(data.suggestions)) return data
+    } catch {
+      // not JSON: next block
+    }
+  }
+  return null
 }
 
 async function refresh($: EngineInterface) {
