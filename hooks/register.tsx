@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Agent, Entry, Job, Load, Panel, Run, Suggestion, Tab } from '../types'
-import { avatar, C, dailyBars, header, hbars, kpis, money, pills, ring, runCard, settle, short, trend } from './svg'
+import { avatar, C, dailyBars, eye, header, hbars, kpis, money, pills, ring, runCard, settle, short, trend } from './svg'
 // @ts-ignore: plain JavaScript, Apache-2.0 (see NOTICE).
 import { register as registerUsage, setUsageShown, stackUsage, usageLine, usageSessionStart, usageTurnComplete } from './token-weather-usage.mjs'
 
@@ -119,6 +119,22 @@ function advance(run: Run, agent: Agent | undefined, feature: string): Run {
   const at = next.steps.findIndex(s => !s.done && s.uses.includes(feature))
   if (at < 0) return { ...next, calls: next.calls + 1, now: feature }
   return { ...next, calls: next.calls + 1, now: feature, steps: next.steps.map((s, i) => (i <= at ? { ...s, done: true } : s)) }
+}
+
+
+// The pill family of the band, the same as token-weather-usage's pills: round border, a light
+// tint behind, no vertical padding (a border's padding made the band taller than the prompt).
+const PILL = { borderStyle: 'round', paddingX: 1, paddingY: 0 } as const
+// Neutral grey at low opacity: readable on the app's light and dark themes.
+const NEUTRAL: [string, string] = ['rgba(127,127,127,0.10)', 'rgba(127,127,127,0.30)']
+const tinted = ([back, line]: [string, string]) => ({ backgroundColor: back, borderColor: line })
+/** The agent's colour (from Noosfera) as a pill tint; the agent the draft points to a little stronger. */
+function agentTint(hex: string, strong = false): [string, string] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return NEUTRAL
+  const n = parseInt(m[1] ?? '0', 16)
+  const rgb = `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`
+  return [`rgba(${rgb},${strong ? 0.2 : 0.11})`, `rgba(${rgb},${strong ? 0.6 : 0.32})`]
 }
 
 let server: string | null = null
@@ -332,48 +348,73 @@ export const register: Register = (on, options) => {
     return ran
   })
 
-  // Above the prompt: the agents with their picture; one picked shows its jobs.
+  // Above the prompt, two sections, Consumi and Agenti: a title row (name on the left, the
+  // button that hides or shows it on the right), then its content laid out as a grid. Every
+  // pill is the same family as token-weather-usage's: round border, paddingX 1, a light tint
+  // of its colour behind, the value in bold.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const usage = await usageLine($, e)
-    if (e.props.hasSurvey || e.props.isWorking) return stackUsage($.ui.resolve(e).Box, usage, await next(e))
-    const hidden = await read($, bandHidden)
-    const noUsage = await read($, usageHidden)
-    const data = await read($, panel)
-    const agents = data?.agents ?? []
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
-    const usageButton = (
-      <Button
-        key="usage"
-        label={noUsage ? 'Mostra consumi' : 'Nascondi consumi'}
-        dimColor
-        onPress={async () => {
-          setUsageShown(noUsage)
-          await update($, usageHidden, () => !noUsage)
-          await $.store.set('usageHidden', !noUsage)
-          $.ui.invalidate('ui.render')
-        }}
-      />
-    )
-    if (hidden || !data || agents.length === 0) {
-      return stackUsage(Box, usage, (
-        <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
-          {hidden && data && agents.length > 0 && (
-            <Button
-              key="show"
-              label="Mostra agenti"
-              dimColor
-              onPress={async () => {
-                await update($, bandHidden, () => false)
-                await $.store.set('bandHidden', false)
-              }}
-            />
-          )}
-          {usageButton}
-        </Box>
-      ))
-    }
     const Svg = e.surface !== 'terminal' && 'Svg' in els ? els.Svg : null
+    const noUsage = await read($, usageHidden)
+    const hidden = await read($, bandHidden)
+    const data = await read($, panel)
+    const agents = data?.agents ?? []
+    const cols = (e.props.bodyColumns ?? 80) >= 90 ? 2 : 1
+
+    const toggle = (key: string, shown: boolean, what: string, onPress: () => Promise<void> | void) => (
+      <Box key={`${key}-pill`} flexDirection="row" alignItems="center" columnGap={1} flexShrink={0} {...PILL} {...tinted(NEUTRAL)}>
+        {Svg && <Svg source={eye(shown)} alt={shown ? `Nascondi ${what}` : `Mostra ${what}`} width={14} height={14} />}
+        <Button key={key} label={Svg ? (shown ? 'Nascondi' : 'Mostra') : (shown ? '▾ Nascondi' : '▸ Mostra')} plain dimColor onPress={onPress} />
+      </Box>
+    )
+    const heading = (key: string, text: string, right: unknown[]) => (
+      <Box key={`h-${key}`} flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={1}>
+        <Box flexDirection="row" columnGap={1} alignItems="center">
+          <Text bold color="success">▍</Text>
+          <Text bold>{text}</Text>
+        </Box>
+        <Box flexDirection="row" columnGap={1} alignItems="center">{right as never}</Box>
+      </Box>
+    )
+    const grid = (key: string, cells: unknown[]) => {
+      const rows: unknown[][] = []
+      for (let i = 0; i < cells.length; i += cols) rows.push(cells.slice(i, i + cols))
+      return (
+        <Box key={`g-${key}`} flexDirection="column" rowGap={1} paddingX={1}>
+          {rows.map((r, i) => (
+            <Box key={`${key}-r${i}`} flexDirection="row" columnGap={1}>
+              {r.map((c, j) => <Box key={`${key}-c${i}-${j}`} flexDirection="column" flexGrow={1} flexShrink={1} width={cols > 1 ? '50%' : '100%'}>{c as never}</Box>)}
+              {r.length < cols && <Box key={`${key}-pad${i}`} flexGrow={1} flexShrink={1} width="50%" />}
+            </Box>
+          ))}
+        </Box>
+      )
+    }
+
+    const sections: unknown[] = []
+    sections.push(heading('usage', 'Consumi', [toggle('usage', !noUsage, 'i consumi', async () => {
+      setUsageShown(noUsage)
+      await update($, usageHidden, () => !noUsage)
+      await $.store.set('usageHidden', !noUsage)
+      $.ui.invalidate('ui.render')
+    })]))
+    if (usage) sections.push(usage)
+    else if (!noUsage) sections.push(<Box key="usage-wait" paddingX={1}><Text dimColor>I consumi arrivano dopo la prima risposta.</Text></Box>)
+
+    const wrap = () => <Box flexDirection="column" rowGap={1}>{sections as never}</Box>
+    // While Claude works or a survey is up the agents step aside, as before.
+    if (e.props.hasSurvey || e.props.isWorking || !data || agents.length === 0) return stackUsage(Box, wrap(), await next(e))
+
+    const agentsToggle = toggle('agents', !hidden, 'gli agenti', async () => {
+      await update($, bandHidden, () => !hidden)
+      await $.store.set('bandHidden', !hidden)
+    })
+    if (hidden) {
+      sections.push(heading('agents', 'Agenti', [agentsToggle]))
+      return wrap()
+    }
     const typed = await read($, draft)
     const chosen = await read($, picked)
     await read($, matches)
@@ -381,59 +422,44 @@ export const register: Register = (on, options) => {
     const agent = agents.find(a => a.id === chosen)
 
     if (agent) {
-      return stackUsage(Box, usage, (
-        <Box flexDirection="column" gap={1}>
-          <Box flexDirection="row" alignItems="center" gap={1}>
-            {Svg && <Svg source={avatar(agent.avatar, agent.color, 30, false, agent.name)} alt={agent.name} width={30} height={30} />}
-            <Text bold>{agent.nickname ? `${agent.nickname}, ${agent.name}` : agent.name}</Text>
-            <Text dimColor>scegli il lavoro</Text>
-          </Box>
-          <Box flexDirection="row" flexWrap="wrap" gap={1}>
-            {agent.tasks.map((t, i) => (
-              <Button
-                key={`t-${agent.id}-${t.id}`}
-                label={t.title}
-                hotkey={i < 9 ? String(i + 1) : undefined}
-                onPress={async () => {
-                  const box = await $.prompt.read()
-                  await $.prompt.fill({ text: jobRequest(agent, t, box.text), mode: 'replace' })
-                  await update($, picked, () => null)
-                }}
-              />
-            ))}
-            <Button key="back" label="Indietro" dimColor onPress={() => update($, picked, () => null)} />
-          </Box>
+      const back = (
+        <Box key="back-pill" flexDirection="row" alignItems="center" flexShrink={0} {...PILL} {...tinted(NEUTRAL)}>
+          <Button key="back" label={Svg ? 'Indietro' : '‹ Indietro'} plain dimColor onPress={() => update($, picked, () => null)} />
         </Box>
-      ))
+      )
+      sections.push(heading('agents', agent.nickname ? `Agenti · ${agent.nickname}, ${agent.name}` : `Agenti · ${agent.name}`, [back, agentsToggle]))
+      sections.push(grid('jobs', agent.tasks.map((t, i) => (
+        <Box key={`job-${t.id}`} flexDirection="row" alignItems="center" columnGap={1} {...PILL} {...tinted(agentTint(agent.color))}>
+          {Svg && <Svg source={avatar(agent.avatar, agent.color, 20, false, agent.name)} alt={agent.name} width={20} height={20} />}
+          <Box flexGrow={1} flexShrink={1}><Text bold wrap="truncate-end">{t.title}</Text></Box>
+          <Button
+            key={`t-${agent.id}-${t.id}`}
+            label="Scegli"
+            hotkey={i < 9 ? String(i + 1) : undefined}
+            plain
+            onPress={async () => {
+              const box = await $.prompt.read()
+              await $.prompt.fill({ text: jobRequest(agent, t, box.text), mode: 'replace' })
+              await update($, picked, () => null)
+            }}
+          />
+        </Box>
+      ))))
+      return wrap()
     }
 
-    return stackUsage(Box, usage, (
-      <Box flexDirection="row" flexWrap="wrap" alignItems="center" gap={1}>
-        <Text dimColor>Agenti</Text>
-        {agents.map((a, i) => (
-          <Box key={`a-${a.id}`} flexDirection="row" alignItems="center" gap={1}>
-            {Svg && <Svg source={avatar(a.avatar, a.color, 28, a.id === hint, a.name)} alt={a.name} width={28} height={28} />}
-            <Button
-              key={`b-${a.id}`}
-              label={a.nickname ? `${a.nickname} · ${a.name}` : a.name}
-              hotkey={String(i + 1)}
-              variant={a.id === hint ? 'primary' : undefined}
-              onPress={() => update($, picked, () => a.id)}
-            />
-          </Box>
-        ))}
-        <Button
-          key="hide"
-          label="Nascondi agenti"
-          dimColor
-          onPress={async () => {
-            await update($, bandHidden, () => true)
-            await $.store.set('bandHidden', true)
-          }}
-        />
-        {usageButton}
+    sections.push(heading('agents', 'Agenti', [agentsToggle]))
+    sections.push(grid('agents', agents.map((a, i) => (
+      <Box key={`agent-${a.id}`} flexDirection="row" alignItems="center" columnGap={1} {...PILL} {...tinted(agentTint(a.color, a.id === hint))}>
+        {Svg && <Svg source={avatar(a.avatar, a.color, 24, a.id === hint, a.name)} alt={a.name} width={24} height={24} />}
+        <Box flexDirection="row" columnGap={1} flexGrow={1} flexShrink={1}>
+          <Text bold>{a.nickname || a.name}</Text>
+          {a.nickname && <Text dimColor wrap="truncate-end">{a.name}</Text>}
+        </Box>
+        <Button key={`b-${a.id}`} label="Scegli" hotkey={String(i + 1)} plain variant={a.id === hint ? 'primary' : undefined} onPress={() => update($, picked, () => a.id)} />
       </Box>
-    ))
+    ))))
+    return wrap()
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
